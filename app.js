@@ -6,6 +6,7 @@ const BUILTIN_LAND_BACKGROUNDS = {
 };
 
 let currentId='',state=null,currentTab='home',wanderTimer=null,inventory=[],mailbox=[],shop=null,adminData=null,challenge={subject:'',petId:'',question:null};
+let mailboxLoaded=false,mailboxAt=0,mailRefreshPromise=null,backgroundMailTimer=null;
 const CLIENT_CACHE={shop:null,shopAt:0,inventory:null,inventoryAt:0};
 function cacheFresh(ts,ms=300000){return Date.now()-ts<ms;}
 
@@ -35,8 +36,74 @@ async function gs(fn,...args){
   }finally{clearTimeout(timer);}
 }
 function esc(v){return String(v??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#39;');}
-async function login(){const id=sid.value.trim(),bd=bday.value;loginMsg.textContent='登入中…';try{const r=await gs('login',id,bd);if(!r){loginMsg.textContent='登入失敗：後端沒有回傳資料，請重新部署最新版本。';return;}if(!r.ok){loginMsg.textContent=r.message||'登入失敗';return;}currentId=id;loginView.classList.add('hidden');studentView.classList.remove('hidden');await refreshState();}catch(e){loginMsg.textContent=e.message||e;}}
-async function refreshState(){try{state=await gs('getStudentState',currentId);if(!state)throw new Error('後端回傳空值。請確認已執行 setupOrUpgradeV4() 並重新部署最新版本。');if(!state.ok)throw new Error(state.message||'讀取學生資料失敗');state.pets=Array.isArray(state.pets)?state.pets:[];state.lands=Array.isArray(state.lands)?state.lands:[];state.furniture=Array.isArray(state.furniture)?state.furniture:[];studentName.textContent=state.student?.name||currentId;coins.textContent=state.student?.coins??0;ver.textContent=state.version||'';mailBadge.textContent=state.unreadMail||0;mailBadge.classList.toggle('hidden',!state.unreadMail);renderYard();await renderCurrentTab();Promise.all([gs('getInventory',currentId).then(x=>inventory=x).catch(()=>{}),gs('getShop').then(x=>shop=x).catch(()=>{})]);}catch(e){alert('讀取失敗：'+(e.message||e));}}
+
+function applyStudentState(s){
+  state=s;
+  if(!state)throw new Error('後端回傳空值。');
+  if(!state.ok)throw new Error(state.message||'讀取學生資料失敗');
+  state.pets=Array.isArray(state.pets)?state.pets:[];
+  state.lands=Array.isArray(state.lands)?state.lands:[];
+  state.furniture=Array.isArray(state.furniture)?state.furniture:[];
+  if(Array.isArray(state.inventory)){inventory=state.inventory;CLIENT_CACHE.inventory=inventory;CLIENT_CACHE.inventoryAt=Date.now();}
+  if(Array.isArray(state.mailbox)){mailbox=state.mailbox;mailboxLoaded=true;mailboxAt=Date.now();}
+  if(state.shop){shop=state.shop;CLIENT_CACHE.shop=shop;CLIENT_CACHE.shopAt=Date.now();}
+  studentName.textContent=state.student?.name||currentId;
+  coins.textContent=state.student?.coins??0;
+  ver.textContent=state.version||'';
+  mailBadge.textContent=state.unreadMail||0;
+  mailBadge.classList.toggle('hidden',!state.unreadMail);
+  renderYard();
+}
+function startBackgroundMailboxRefresh(){
+  if(backgroundMailTimer)clearInterval(backgroundMailTimer);
+  // 進站後延遲 45 秒再背景更新，之後每 5 分鐘更新一次，不阻塞任何按鈕。
+  setTimeout(()=>refreshMailboxInBackground(false),45000);
+  backgroundMailTimer=setInterval(()=>refreshMailboxInBackground(false),300000);
+}
+async function refreshMailboxInBackground(forceRender=false){
+  if(!currentId)return;
+  if(mailRefreshPromise)return mailRefreshPromise;
+  mailRefreshPromise=gs('getMailboxFresh',currentId)
+    .then(r=>{
+      if(Array.isArray(r?.mailbox))mailbox=r.mailbox;
+      mailboxLoaded=true;mailboxAt=Date.now();
+      if(state){
+        state.unreadMail=Number(r?.unreadMail||0);
+        mailBadge.textContent=state.unreadMail;
+        mailBadge.classList.toggle('hidden',!state.unreadMail);
+      }
+      if(forceRender && currentTab==='mail')renderMailFromCache();
+      return r;
+    })
+    .catch(()=>null)
+    .finally(()=>mailRefreshPromise=null);
+  return mailRefreshPromise;
+}
+async function login(){
+  const id=sid.value.trim(),bd=bday.value;
+  loginMsg.textContent='登入中…';
+  try{
+    const r=await gs('loginBootstrap',id,bd);
+    if(!r){loginMsg.textContent='登入失敗：後端沒有回傳資料。';return;}
+    if(!r.ok){loginMsg.textContent=r.message||'登入失敗';return;}
+    currentId=id;
+    loginView.classList.add('hidden');
+    studentView.classList.remove('hidden');
+    applyStudentState(r.state);
+    currentTab='home';
+    document.querySelectorAll('.tabbtn').forEach(x=>x.classList.remove('active'));
+    document.querySelector('[data-tab="home"]')?.classList.add('active');
+    renderHome();
+    startBackgroundMailboxRefresh();
+  }catch(e){loginMsg.textContent=e.message||e;}
+}
+async function refreshState(){
+  try{
+    const s=await gs('getStudentState',currentId);
+    applyStudentState(s);
+    await renderCurrentTab();
+  }catch(e){alert('讀取失敗：'+(e.message||e));}
+}
 
 function normalizeMapUrlFast(url){
   const s=String(url||'').trim();
@@ -158,12 +225,59 @@ async function loadMoreChallengeQuestions(){
 }
 async function finishChallengeUI(){try{await flushChallengeAnswers(true);await refreshState();currentTab='challenge';renderChallengeHome();}catch(e){alert(e.message||e);}}
 function showLocked(r){panel.innerHTML=`<div class="qbox"><h3>今天這科已挑戰結束</h3><p>明早 7:00 後會重新有 3 次機會。</p><p>重置：${esc(r.resetAt)}</p><button class="btn gray" onclick="renderChallengeHome()">返回</button></div>`;}
-async function renderMail(){mailbox=await gs('getMailbox',currentId);renderMailFromCache();}
-function renderMailFromCache(){panel.innerHTML=`<h3>📬 信箱</h3>${mailbox.map(m=>`<div class="mailcard"><b>${esc(m['標題'])}</b><br><span class="small">寄件者：${esc(m['寄件者'])}</span><p>${esc(m['內容'])}</p>${m['附件ID']?`🎁 ${esc(m['附件名稱'])} ×${m['附件數量']}<br>`:''}<button class="btn ${m['是否領取']===true||String(m['是否領取']).toUpperCase()==='TRUE'?'gray':''}" ${(m['是否領取']===true||String(m['是否領取']).toUpperCase()==='TRUE')?'disabled':''} onclick="claimMailUI('${m['信件ID']}')">${(m['是否領取']===true||String(m['是否領取']).toUpperCase()==='TRUE')?'已領取':'領取附件'}</button></div>`).join('')||'<div class="mailcard">目前沒有信件。</div>'}`;}
-async function claimMailUI(id){try{const r=await gs('claimMail',currentId,id);inventory=Array.isArray(r.inventory)?r.inventory:inventory;const m=mailbox.find(x=>String(x['信件ID'])===String(id));if(m)m['是否領取']=true;state.unreadMail=Number(r.unreadMail||0);mailBadge.textContent=state.unreadMail;mailBadge.classList.toggle('hidden',!state.unreadMail);renderMailFromCache();}catch(e){alert(e.message||e);}}
+async function renderMail(){
+  // 有快取就立刻畫出來，不等待 Apps Script。
+  if(mailboxLoaded){
+    renderMailFromCache();
+    // 超過 60 秒才在背景偷偷更新，不阻塞畫面。
+    if(Date.now()-mailboxAt>60000)refreshMailboxInBackground(true);
+    return;
+  }
+  panel.innerHTML='<h3>📬 信箱</h3><div class="mailcard">正在載入信箱…</div>';
+  await refreshMailboxInBackground(true);
+}
+function renderMailFromCache(){
+  panel.innerHTML=`<h3>📬 信箱</h3>${mailbox.map(m=>`<div class="mailcard"><b>${esc(m['標題'])}</b><br><span class="small">寄件者：${esc(m['寄件者'])}</span><p>${esc(m['內容'])}</p>${m['附件ID']?`🎁 ${esc(m['附件名稱'])} ×${m['附件數量']}<br>`:''}<button class="btn ${m['是否領取']===true||String(m['是否領取']).toUpperCase()==='TRUE'?'gray':''}" ${(m['是否領取']===true||String(m['是否領取']).toUpperCase()==='TRUE')?'disabled':''} onclick="claimMailUI('${m['信件ID']}')">${(m['是否領取']===true||String(m['是否領取']).toUpperCase()==='TRUE')?'已領取':'領取附件'}</button></div>`).join('')||'<div class="mailcard">目前沒有信件。</div>'}`;
+}
+async function claimMailUI(id){
+  const m=mailbox.find(x=>String(x['信件ID'])===String(id));
+  if(!m)return;
+  const wasClaimed=m['是否領取'];
+  const oldUnread=Number(state?.unreadMail||0);
+
+  // 先更新畫面，學生不需要等後端。
+  m['是否領取']=true;
+  if(state)state.unreadMail=Math.max(0,oldUnread-1);
+  mailBadge.textContent=state?.unreadMail||0;
+  mailBadge.classList.toggle('hidden',!(state?.unreadMail));
+  renderMailFromCache();
+
+  try{
+    const r=await gs('claimMailFast',currentId,id);
+    if(Array.isArray(r?.inventory)){inventory=r.inventory;CLIENT_CACHE.inventory=inventory;CLIENT_CACHE.inventoryAt=Date.now();}
+    if(state){
+      state.unreadMail=Number(r?.unreadMail??state.unreadMail);
+      mailBadge.textContent=state.unreadMail;
+      mailBadge.classList.toggle('hidden',!state.unreadMail);
+    }
+  }catch(e){
+    // 後端失敗才回復原狀。
+    m['是否領取']=wasClaimed;
+    if(state)state.unreadMail=oldUnread;
+    mailBadge.textContent=oldUnread;
+    mailBadge.classList.toggle('hidden',!oldUnread);
+    renderMailFromCache();
+    alert(e.message||e);
+  }
+}
 async function renderShop(){if(!shop)shop=await gs('getShop');const owned=new Set(state.lands.map(x=>String(x['土地ID'])));panel.innerHTML=`<h3>🗺️ 土地商店</h3><p class="small">買新土地後，可以讓不同寵物住在不同地圖。</p>${shop.lands.map(l=>`<div class="itemcard"><b>${esc(l['名稱'])}</b>　🪙${l['價格']}<br><button class="btn ${owned.has(String(l['土地ID']))?'gray':'secondary'}" ${owned.has(String(l['土地ID']))?'disabled':''} onclick="buyLandUI('${l['土地ID']}')">${owned.has(String(l['土地ID']))?'已擁有':'購買'}</button></div>`).join('')}`;}
 async function buyLandUI(id){try{const r=await gs('buyLandFast',currentId,id);if(r.land&&!state.lands.some(x=>String(x['土地ID'])===String(id)))state.lands.push(r.land);state.student.coins=Number(r.coins||0);coins.textContent=state.student.coins;renderYard();await renderShop();}catch(e){alert(e.message||e);}}
-function logout(){currentId='';state=null;if(wanderTimer)clearInterval(wanderTimer);studentView.classList.add('hidden');adminView.classList.add('hidden');loginView.classList.remove('hidden');}
+function logout(){
+  currentId='';state=null;inventory=[];mailbox=[];shop=null;mailboxLoaded=false;mailboxAt=0;
+  if(wanderTimer)clearInterval(wanderTimer);
+  if(backgroundMailTimer)clearInterval(backgroundMailTimer);
+  studentView.classList.add('hidden');adminView.classList.add('hidden');loginView.classList.remove('hidden');
+}
 async function openAdmin(){loginView.classList.add('hidden');adminView.classList.remove('hidden');await loadAdmin();}
 async function loadAdmin(){adminData=await gs('getAdminData');const itemOpts=adminData.items.map(x=>`<option value="${x['道具ID']}">${esc(x['名稱'])}</option>`).join('');const petOpts=adminData.pets.map(x=>`<option value="${x.petId}">${esc(x.name)}</option>`).join('');adminArea.innerHTML=`<table class="admin-table"><thead><tr><th>座號</th><th>學生</th><th>金幣</th><th>發獎勵</th></tr></thead><tbody>${adminData.students.map(s=>`<tr><td>${s.seat||''}</td><td>${esc(s.name)}<br><span class="small">${esc(s.id)}</span></td><td>${s.coins}</td><td><div class="row"><button class="btn" onclick="adminCoin('${s.id}',10)">+10🪙</button><select id="it-${s.id}">${itemOpts}</select><input id="iq-${s.id}" type="number" min="1" value="1" style="width:65px"><button class="btn purple" onclick="adminItem('${s.id}')">發道具</button><select id="pt-${s.id}">${petOpts}</select><button class="btn secondary" onclick="adminPet('${s.id}')">發寵物</button></div></td></tr>`).join('')}</tbody></table>`;}
 async function adminCoin(id,n){await gs('addCoins',id,n,'課堂獎勵');await loadAdmin();}
