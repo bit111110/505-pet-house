@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<meta name="theme-color" content="#f5efe4">
+<title>505 班級寵物小屋</title>
+<link rel="preload" href="assets/maps/grassland.png" as="image">
+<link rel="stylesheet" href="style.css?v=5.0.0">
+</head>
+<body>
+<div id="loginView" class="app"><div class="card login"><h1>🐾 班級寵物小屋 V4</h1><p>學號＋生日登入</p><input id="sid" placeholder="學號，例如 50501"><input id="bday" type="date"><div class="nav"><button class="btn" onclick="login()">登入</button><button class="btn gray" onclick="openAdmin()">老師後台</button></div><p id="loginMsg"></p></div></div>
+
+<div id="studentView" class="hidden">
+  <div class="top"><div><b id="studentName">學生</b> 的寵物小屋 <span class="small" id="ver"></span></div><div class="coins">🪙 <span id="coins">0</span></div></div>
+  <div class="app layout">
+    <div id="yard" class="yard"><div class="zone sky"></div><div class="zone ground"></div><div class="zone-label sky">天空區</div><div class="zone-label ground">地面區</div><div id="landTitle" class="land-title">草地</div></div>
+    <div class="card">
+      <div class="tabs">
+        <button class="tabbtn active" data-tab="home" onclick="switchTab('home',this)">🏠 小屋</button>
+        <button class="tabbtn" data-tab="upgrade" onclick="switchTab('upgrade',this)">⬆️ 升級</button>
+        <button class="tabbtn" data-tab="bag" onclick="switchTab('bag',this)">🎒 道具</button>
+        <button class="tabbtn" data-tab="challenge" onclick="switchTab('challenge',this)">⚔️ 挑戰</button>
+        <button class="tabbtn" data-tab="mail" onclick="switchTab('mail',this)">📬 信箱<span id="mailBadge" class="badge hidden">0</span></button>
+        <button class="tabbtn" data-tab="shop" onclick="switchTab('shop',this)">🗺️ 土地</button>
+      </div>
+      <div id="panel" class="panel"></div>
+      <div class="nav"><button class="btn gray" onclick="logout()">登出</button><button class="btn" onclick="refreshState()">重新整理</button></div>
+    </div>
+  </div>
+</div>
+
+<div id="adminView" class="app hidden"><div class="card"><h2>👩‍🏫 老師後台</h2><p>發放金幣、道具、寵物。寵物仍然只有老師能分配。</p><div class="nav"><button class="btn" onclick="loadAdmin()">重新整理</button><button class="btn gray" onclick="logout()">回登入</button></div><div id="adminArea" style="overflow:auto;margin-top:10px"></div></div></div>
+<script src="config.js?v=5.0.0"></script>
+<script src="app.js?v=5.0.0"></script>
+</body>
+</html>
