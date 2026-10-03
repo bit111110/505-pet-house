@@ -1,3 +1,4 @@
+const FRONTEND_BUILD='20261004-0052';
 const BUILTIN_LAND_BACKGROUNDS = {
   'LAND001': 'assets/maps/grassland.png',
   'LAND002': 'assets/maps/forest.png',
