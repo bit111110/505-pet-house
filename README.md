@@ -1,72 +1,70 @@
-# V5.8 Apps Script 效能優化版
+# V5.9
 
-這版的目標不是加功能，而是減少 Google Apps Script / 試算表 I/O。
+這版只先做你指定的三項。
 
-## 主要改善
+## 1. 對戰背景設定
+新增工作表：`對戰背景設定`
 
-1. 登入後原本會同時呼叫：
-   - getMailboxFresh
-   - getInventory
-   - getBackgroundCatalogFresh
-   - getMonsterCatalogFresh
+欄位：
+- 背景ID
+- 名稱
+- 圖片
+- 適用科目
+- 是否開放
 
-   現在合併成一次：
-   - getRuntimeBundleFast
+GitHub 建議放：
+`assets/battle-backgrounds/BATTLE001.webp`
 
-   也就是 4 次 Apps Script 啟動成本 → 1 次。
+範例：
+`BATTLE001 | 森林戰場 | assets/battle-backgrounds/BATTLE001.webp | 全部 | TRUE`
 
-2. 登入初始化不再重複跑兩次
-   - 原本 loginV55 會 ensureStarterData + ensurePlotData
-   - getStudentCoreStateV55 又再跑一次
-   - 現在只會做一次，且同一學生 6 小時內用快取略過初始化檢查。
+## 2. 寵物屬性與技能
+我把你打的「第」視為「地」。
 
-3. 信箱不再每次整張掃描
-   - 顯示信箱時，從資料尾端分段往回找最近 100 封
-   - 信箱累積到數千 / 數萬列時差異會很明顯。
+屬性下拉：
+光 / 地 / 暗 / 草 / 水 / 毒 / 火 / 電 / 冰 / 風 / 鋼 / 混沌
 
-4. 整點禮物批次寫入
-   - 原本漏 20 個整點 = appendRow 20 次
-   - 現在一次 setValues 寫入。
+`寵物設定` 會新增：
+- 屬性
 
-5. 一鍵收取改成批次處理
-   - 道具一次整理
-   - 信件領取狀態用 RangeList 一次更新
-   - 不再一封信一個 setValue。
+新增工作表：`寵物技能設定`
 
-6. 背景 / 怪物設定加入短期快取
-   - 背景：30 秒
-   - 怪物：5 分鐘
-   - 商店仍提供「強制同步」按鈕，按下去會讀最新試算表。
+欄位：
+- 技能ID
+- 寵物ID
+- 技能名稱
+- 屬性
+- 解鎖等級
+- 基礎傷害
+- 傷害成長
+- 圖示
+- 是否開放
 
-7. 表頭 headerMap 加 6 小時快取
-   - Code.gs 很多函式原本每次都會再讀第一列。
-   - 現在同一工作表不會一直重讀表頭。
+目前傷害：
+`基礎傷害 + (寵物等級 - 1) × 傷害成長`
 
-## 更新方式
+答錯仍然只造成 30% 傷害。
 
-GitHub 覆蓋：
+## 3. 道具圖片顯示
+「我的道具」與「寵物升級」現在會顯示 `道具設定` 的圖片欄。
+
+例如：
+`assets/items/EXP001.png`
+
+## 更新
+GitHub：
 - app.js
 - index.html
 
-Apps Script 覆蓋：
+Apps Script：
 - apps-script/Code.gs
 
-然後：
-1. 儲存 Apps Script
-2. 不需要執行 setupOrUpgrade
-3. 部署 → 管理部署作業 → 編輯 → 建立新版本 → 部署
-4. GitHub Commit / Push
+更新 Apps Script 後：
+1. 執行一次 `setupOrUpgradeV59()`
+2. 建立新版本重新部署
+3. GitHub Commit / Push
 
-測試網址：
-https://bit111110.github.io/505-pet-house/?v=20261004-2100
+測試：
+https://bit111110.github.io/505-pet-house/?v=20261004-2200
 
-## 不會動到
-- 學生資料
-- 寵物資料
-- 土地 / 背景
-- 信箱
-- 道具數量
-- 題庫
-- 怪物設定
-
-只改讀寫方式，不重製資料表。
+動畫這版完全沒做，先把系統骨架穩定好。

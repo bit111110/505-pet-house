@@ -1,4 +1,4 @@
-const FRONTEND_BUILD='20261004-2100';
+const FRONTEND_BUILD='20261004-2200';
 const BUILTIN_LAND_BACKGROUNDS = {
   'LAND001': 'assets/maps/grassland.png',
   'LAND002': 'assets/maps/forest.png',
@@ -15,6 +15,8 @@ let LIVE_LAND_CONFIGS = {};
 let liveLandCatalogAt = 0;
 let MONSTER_CONFIGS = {};
 let MONSTER_LIST = [];
+let BATTLE_BG_LIST = [];
+let PET_SKILL_LIST = [];
 
 async function loadStaticGameData(){
   try{
@@ -60,6 +62,7 @@ function applyStaticConfigsToState(s){
         name:cfg.name||p.name||p.petId,
         image:getPetImage(p.petId,p.stage)||p.image||'',
         movementType:cfg.moveType||p.movementType||'地面型',
+        attribute:p.attribute||cfg.attribute||'光',
         dialogs:(Array.isArray(cfg.dialogues)&&cfg.dialogues.length)
           ? cfg.dialogues
           : (Array.isArray(p.dialogs)&&p.dialogs.length?p.dialogs:['今天也一起努力吧！','我喜歡這裡～','一起變強吧！'])
@@ -271,6 +274,8 @@ async function prefetchStudentData(){
       MONSTER_LIST=r.monsters;
       MONSTER_CONFIGS=Object.fromEntries(MONSTER_LIST.map(m=>[String(m.monsterId),m]));
     }
+    if(Array.isArray(r?.battleBackgrounds))BATTLE_BG_LIST=r.battleBackgrounds;
+    if(Array.isArray(r?.petSkills))PET_SKILL_LIST=r.petSkills;
     if(state){
       state.unreadMail=Number(r?.unreadMail||0);
       mailBadge.textContent=state.unreadMail;
@@ -399,6 +404,26 @@ function getMonsterHp(monster,no){
   return base + Math.max(0,Number(no||1)-1)*growth;
 }
 
+
+function getBattleBackground(subject){
+  const list=(BATTLE_BG_LIST||[]).filter(x=>x.enabled!==false && (String(x.subject||'全部')==='全部'||String(x.subject)===String(subject||'')));
+  return list[0]||null;
+}
+function getPetAttribute(pet){ return String(pet?.attribute||'光'); }
+function getConfiguredPetSkills(pet){
+  const rows=(PET_SKILL_LIST||[]).filter(s=>String(s.petId)===String(pet?.petId) && s.enabled!==false && Number(pet?.level||1)>=Number(s.unlockLevel||1));
+  if(rows.length){
+    return rows.map(s=>({
+      id:s.skillId,
+      name:s.name,
+      icon:s.icon||'✨',
+      attribute:s.attribute||getPetAttribute(pet),
+      damage:Math.max(1,Math.round(Number(s.baseDamage||0)+(Number(pet?.level||1)-1)*Number(s.damageGrowth||0)))
+    }));
+  }
+  return getPetSkills(pet);
+}
+
 function switchMainMode(mode){
   mainMode=mode==='battle'?'battle':'home';
   const y=document.getElementById('yard'),b=document.getElementById('battleMain');
@@ -420,10 +445,11 @@ function renderBattleMain(){
   }
   const mhp=Math.max(0,Number(challenge.monsterHp??challenge.monsterMaxHp??100));
   const mmax=Math.max(1,Number(challenge.monsterMaxHp||100));
-  root.innerHTML=`<div class="battle-main-scene">
-    <div class="battle-sky"></div><div class="battle-ground"></div>
+  const battleBg=getBattleBackground(challenge.subject);
+  root.innerHTML=`<div class="battle-main-scene" ${battleBg?.image?`style="background-image:url('${esc(battleBg.image)}');background-size:cover;background-position:center"`:''}>
+    ${battleBg?.image?'':'<div class="battle-sky"></div><div class="battle-ground"></div>'}
     <div class="battle-status"><div><b>${esc(challenge.subject)}對戰</b>　怪物 ${challenge.monsterNo||1}</div><div>答對 ${challenge.status?.correct||0}　<span class="lives">${'❤️'.repeat(Math.max(0,3-(challenge.status?.wrong||0)))}${'🖤'.repeat(challenge.status?.wrong||0)}</span></div></div>
-    <div class="battle-pet-side"><div class="battle-pet-name">${esc(pet.name)}</div><div id="battlePetSprite" class="battle-pet-sprite">${getPetImage(pet.petId,pet.stage)?`<img src="${getPetImage(pet.petId,pet.stage)}">`:'🐾'}</div></div>
+    <div class="battle-pet-side"><div class="battle-pet-name">${esc(pet.name)} <span class="small">【${esc(getPetAttribute(pet))}】</span></div><div id="battlePetSprite" class="battle-pet-sprite">${getPetImage(pet.petId,pet.stage)?`<img src="${getPetImage(pet.petId,pet.stage)}">`:'🐾'}</div></div>
     <div class="battle-monster-side"><div class="battle-monster-name">${esc((challenge.monsterCfg||{}).name||('怪物 '+(challenge.monsterNo||1)))}</div><div id="battleMonsterSprite" class="battle-monster-sprite">${(challenge.monsterCfg||{}).image?`<img src="${esc((challenge.monsterCfg||{}).image)}" alt="${esc((challenge.monsterCfg||{}).name||'怪物')}">`:'👾'}</div><div class="hpbar"><div style="width:${Math.max(0,mhp/mmax*100)}%"></div></div><small>HP ${Math.ceil(mhp)} / ${mmax}</small></div>
   </div>`;
 }
@@ -500,7 +526,7 @@ function petCardHtml(p){const pct=Math.min(100,p.exp/p.expNeed*100);return `<div
 async function changeLand(id){try{const r=await gs('setActiveLandFast',currentId,id);state.activeLandId=r.activeLandId;state.furniture=Array.isArray(r.furniture)?r.furniture:[];renderYard();renderHome();}catch(e){alert(e.message||e);}}
 async function movePetUI(petId){const sel=document.getElementById('plot-'+petId);if(!sel)return;try{await gs('movePetToLand',currentId,petId,sel.value);const p=state.pets.find(x=>x.petId===petId);if(p)p.landId=sel.value;renderYard();renderHome();}catch(e){alert(e.message||e);}}
 async function applyHomeBackground(){const bg=document.getElementById('homeBg')?.value;if(!bg)return;await useBackgroundFromShop(bg);}
-async function renderUpgrade(){if(!Array.isArray(inventory)||!inventory.length)inventory=await gs('getInventory',currentId);const expItems=inventory.filter(x=>x.config?.['類型']==='經驗型');panel.innerHTML=`<h3>⬆️ 寵物升級</h3><label>選擇寵物</label><select id="upPet" class="full">${state.pets.map(p=>`<option value="${p.petId}">${esc(p.name)} Lv.${p.level}</option>`).join('')}</select><div id="upPetInfo" style="margin-top:8px"></div><h4>使用經驗道具</h4>${expItems.length?expItems.map(x=>`<div class="itemcard"><b>${esc(x.config['名稱'])}</b> ×${x.quantity}<br><span class="small">+${x.config['效果值']} EXP/個</span><div class="row" style="margin-top:6px"><input id="qty-${x.itemId}" type="number" min="1" max="${x.quantity}" value="1" style="width:80px"><button class="btn" onclick="useExp('${x.itemId}')">使用</button></div></div>`).join(''):'<div class="itemcard">目前沒有經驗型道具。</div>'}`;upPet.onchange=renderUpPetInfo;renderUpPetInfo();}
+async function renderUpgrade(){if(!Array.isArray(inventory)||!inventory.length)inventory=await gs('getInventory',currentId);const expItems=inventory.filter(x=>x.config?.['類型']==='經驗型');panel.innerHTML=`<h3>⬆️ 寵物升級</h3><label>選擇寵物</label><select id="upPet" class="full">${state.pets.map(p=>`<option value="${p.petId}">${esc(p.name)} Lv.${p.level}</option>`).join('')}</select><div id="upPetInfo" style="margin-top:8px"></div><h4>使用經驗道具</h4>${expItems.length?expItems.map(x=>`<div class="itemcard">${x.config?.['圖片']?`<img src="${esc(x.config['圖片'])}" style="width:72px;height:72px;object-fit:contain;float:left;margin-right:10px">`:''}<b>${esc(x.config['名稱'])}</b> ×${x.quantity}<br><span class="small">+${x.config['效果值']} EXP/個</span><div class="row" style="margin-top:6px"><input id="qty-${x.itemId}" type="number" min="1" max="${x.quantity}" value="1" style="width:80px"><button class="btn" onclick="useExp('${x.itemId}')">使用</button></div></div>`).join(''):'<div class="itemcard">目前沒有經驗型道具。</div>'}`;upPet.onchange=renderUpPetInfo;renderUpPetInfo();}
 function renderUpPetInfo(){const p=state.pets.find(x=>x.petId===upPet.value);if(p)upPetInfo.innerHTML=petCardHtml(p);}
 async function useExp(itemId){
   const petId=upPet.value,qty=Number(document.getElementById('qty-'+itemId).value||1);
@@ -514,7 +540,7 @@ async function useExp(itemId){
     const note=document.createElement('div');note.className='success';note.textContent=`✅ +${r.gained} EXP`;panel.prepend(note);setTimeout(()=>note.remove(),1400);
   }catch(e){alert(e.message||e);}
 }
-async function renderBag(){if(!Array.isArray(inventory)||!inventory.length)inventory=await gs('getInventory',currentId);panel.innerHTML=`<h3>🎒 我的道具</h3>${inventory.map(x=>`<div class="itemcard"><b>${esc(x.config?.['名稱']||x.itemId)}</b> ×${x.quantity}<br><span class="small">${esc(x.config?.['類型']||'')}｜${esc(x.config?.['說明']||'')}</span></div>`).join('')||'<div class="itemcard">背包目前是空的。</div>'}`;}
+async function renderBag(){if(!Array.isArray(inventory)||!inventory.length)inventory=await gs('getInventory',currentId);panel.innerHTML=`<h3>🎒 我的道具</h3>${inventory.map(x=>`<div class="itemcard" style="min-height:86px">${x.config?.['圖片']?`<img src="${esc(x.config['圖片'])}" style="width:76px;height:76px;object-fit:contain;float:left;margin-right:10px">`:''}<b>${esc(x.config?.['名稱']||x.itemId)}</b> ×${x.quantity}<br><span class="small">${esc(x.config?.['類型']||'')}｜${esc(x.config?.['說明']||'')}</span><div style="clear:both"></div></div>`).join('')||'<div class="itemcard">背包目前是空的。</div>'}`;}
 function renderChallengeHome(){const subjects=['國語','數學','英文','自然','社會'];panel.innerHTML=`<h3>⚔️ 寵物對戰挑戰</h3><p class="small">選擇科目與寵物。使用技能時會出題；答對造成完整傷害，答錯仍可造成 30% 傷害。每科累積答錯 3 次後鎖定到下一個早上 7:00。</p>${subjects.map(s=>{const st=state.challengeStatus?.[s]||{correct:0,wrong:0,locked:false};return `<div class="subjectcard"><b>${s}</b>　答對 ${st.correct}　<span class="lives">${'❤️'.repeat(Math.max(0,3-st.wrong))}${'🖤'.repeat(st.wrong)}</span><br><button class="btn ${st.locked?'gray':'blue'}" ${st.locked?'disabled':''} onclick="chooseChallenge('${s}')">${st.locked?'今日已結束':'進入對戰'}</button></div>`}).join('')}`;}
 function chooseChallenge(subject){challenge.subject=subject;switchMainMode('battle');renderBattleMain();panel.innerHTML=`<h3>⚔️ ${subject}對戰</h3><label>選擇出戰寵物</label><select id="chPet" class="full">${state.pets.map(p=>`<option value="${p.petId}">${esc(p.name)} Lv.${p.level}・第${p.stage}階</option>`).join('')}</select><div class="nav"><button class="btn blue" onclick="startChallengeUI()">開始戰鬥</button><button class="btn gray" onclick="renderChallengeHome()">返回</button></div>`;}
 function getPetSkills(pet){const cfg=PET_CONFIGS[String(pet.petId)]||{};const arr=Array.isArray(cfg.skills)?cfg.skills:[];return arr.filter(s=>Number(s.minStage||1)<=Number(pet.stage||1));}
@@ -536,14 +562,14 @@ async function startChallengeUI(){
 function renderBattle(){
   const pet=state.pets.find(p=>p.petId===challenge.petId);if(!pet)return;
   renderBattleMain();
-  const skills=getPetSkills(pet);
+  const skills=getConfiguredPetSkills(pet);
   panel.innerHTML=`<h3>⚔️ ${esc(challenge.subject)}對戰控制</h3>
   <div class="petcard"><b>${esc(pet.name)}</b> Lv.${pet.level}・第${pet.stage}階<br><span class="small">怪物 ${challenge.monsterNo}｜HP ${Math.ceil(challenge.monsterHp)} / ${challenge.monsterMaxHp}</span></div>
   ${challenge.lastMsg?`<div style="margin:8px 0">${challenge.lastMsg}</div>`:''}
   <h4>選擇技能</h4><div class="skill-grid">${skills.map(s=>`<button class="btn purple skill-btn" onclick="useBattleSkill('${s.id}')"><b>${esc(s.icon||'✨')} ${esc(s.name)}</b><br><span class="small" style="color:white">威力 ${s.damage}</span></button>`).join('')}</div>
   <div class="nav"><button class="btn gray" onclick="finishChallengeUI()">結束對戰</button><button class="btn secondary" onclick="switchMainMode('home')">看一下小屋</button></div>`;
 }
-function useBattleSkill(skillId){const pet=state.pets.find(p=>p.petId===challenge.petId);const skill=getPetSkills(pet).find(s=>String(s.id)===String(skillId));if(!skill)return;challenge.selectedSkill=skill;if(!challenge.questions?.length || challenge.qIndex>=challenge.questions.length){loadMoreBattleQuestions();return;}challenge.question=challenge.questions[challenge.qIndex];renderBattleQuestion();}
+function useBattleSkill(skillId){const pet=state.pets.find(p=>p.petId===challenge.petId);const skill=getConfiguredPetSkills(pet).find(s=>String(s.id)===String(skillId));if(!skill)return;challenge.selectedSkill=skill;if(!challenge.questions?.length || challenge.qIndex>=challenge.questions.length){loadMoreBattleQuestions();return;}challenge.question=challenge.questions[challenge.qIndex];renderBattleQuestion();}
 function renderBattleQuestion(){switchMainMode('battle');renderBattleMain();const q=challenge.question,skill=challenge.selectedSkill;if(!q||!skill){renderBattle();return;}let answer='';if(String(q.type).includes('填充'))answer=`<input id="fillAns" class="full" type="text" placeholder="輸入答案"><button class="btn blue" style="margin-top:8px" onclick="sendBattleAnswer(document.getElementById('fillAns').value)">送出</button>`;else if(String(q.type).includes('是非'))answer=`<div class="grid2"><button class="btn blue option" onclick="sendBattleAnswer('A')">⭕ 是</button><button class="btn red option" onclick="sendBattleAnswer('B')">❌ 否</button></div>`;else answer=q.options.map((o,i)=>`<button class="btn option blue" onclick="sendBattleAnswer('${String.fromCharCode(65+i)}')">${String.fromCharCode(65+i)}. ${esc(o)}</button>`).join('');panel.innerHTML=`<div class="question-overlay"><div class="row"><b>${esc(skill.icon||'✨')} ${esc(skill.name)}</b><span>威力 ${skill.damage}</span></div><div class="qtext">${esc(q.text)}</div>${answer}<button class="btn gray" style="margin-top:8px" onclick="renderBattle()">取消技能</button></div>`;}
 async function sendBattleAnswer(ans){
   const q=challenge.question,skill=challenge.selectedSkill;if(!q||!skill)return;
