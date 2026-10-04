@@ -1,4 +1,4 @@
-const FRONTEND_BUILD='20261004-1935';
+const FRONTEND_BUILD='20261004-2010';
 const BUILTIN_LAND_BACKGROUNDS = {
   'LAND001': 'assets/maps/grassland.png',
   'LAND002': 'assets/maps/forest.png',
@@ -13,6 +13,8 @@ let STATIC_PETS = [];
 let STATIC_LANDS = [];
 let LIVE_LAND_CONFIGS = {};
 let liveLandCatalogAt = 0;
+let MONSTER_CONFIGS = {};
+let MONSTER_LIST = [];
 
 async function loadStaticGameData(){
   try{
@@ -266,7 +268,8 @@ async function prefetchStudentData(){
     gs('getInventory',currentId).then(r=>{
       if(Array.isArray(r)){inventory=r;CLIENT_CACHE.inventory=r;CLIENT_CACHE.inventoryAt=Date.now();saveLocal('inventory',r);}
     }).catch(()=>null),
-    refreshLiveLandCatalog(true)
+    refreshLiveLandCatalog(true).catch(()=>null),
+    loadMonsterCatalog().catch(()=>null)
   ];
   Promise.allSettled(jobs);
 }
@@ -344,6 +347,48 @@ function normalizeMapUrlFast(url){
 }
 
 
+
+async function loadMonsterCatalog(){
+  try{
+    const rows=await gs('getMonsterCatalogFresh');
+    MONSTER_LIST=Array.isArray(rows)?rows:[];
+    MONSTER_CONFIGS=Object.fromEntries(MONSTER_LIST.map(m=>[String(m.monsterId),m]));
+    return MONSTER_LIST;
+  }catch(e){
+    console.warn('怪物設定載入失敗',e);
+    MONSTER_LIST=[];MONSTER_CONFIGS={};
+    return [];
+  }
+}
+function getAvailableMonsters(subject){
+  const s=String(subject||'');
+  return MONSTER_LIST.filter(m=>{
+    if(m.enabled===false)return false;
+    const ms=String(m.subject||'全部');
+    return ms==='全部'||ms===s;
+  });
+}
+function getMonsterForBattle(subject,no){
+  const list=getAvailableMonsters(subject);
+  if(!list.length){
+    return {
+      monsterId:'MON000',
+      name:'訓練怪物',
+      image:'',
+      baseHp:100,
+      hpGrowth:25,
+      subject:'全部',
+      enabled:true
+    };
+  }
+  return list[(Math.max(1,Number(no||1))-1)%list.length];
+}
+function getMonsterHp(monster,no){
+  const base=Math.max(1,Number(monster?.baseHp||100));
+  const growth=Math.max(0,Number(monster?.hpGrowth||25));
+  return base + Math.max(0,Number(no||1)-1)*growth;
+}
+
 function switchMainMode(mode){
   mainMode=mode==='battle'?'battle':'home';
   const y=document.getElementById('yard'),b=document.getElementById('battleMain');
@@ -369,7 +414,7 @@ function renderBattleMain(){
     <div class="battle-sky"></div><div class="battle-ground"></div>
     <div class="battle-status"><div><b>${esc(challenge.subject)}對戰</b>　怪物 ${challenge.monsterNo||1}</div><div>答對 ${challenge.status?.correct||0}　<span class="lives">${'❤️'.repeat(Math.max(0,3-(challenge.status?.wrong||0)))}${'🖤'.repeat(challenge.status?.wrong||0)}</span></div></div>
     <div class="battle-pet-side"><div class="battle-pet-name">${esc(pet.name)}</div><div id="battlePetSprite" class="battle-pet-sprite">${getPetImage(pet.petId,pet.stage)?`<img src="${getPetImage(pet.petId,pet.stage)}">`:'🐾'}</div></div>
-    <div class="battle-monster-side"><div class="battle-monster-name">怪物 ${challenge.monsterNo||1}</div><div id="battleMonsterSprite" class="battle-monster-sprite">👾</div><div class="hpbar"><div style="width:${Math.max(0,mhp/mmax*100)}%"></div></div><small>HP ${Math.ceil(mhp)} / ${mmax}</small></div>
+    <div class="battle-monster-side"><div class="battle-monster-name">${esc((challenge.monsterCfg||{}).name||('怪物 '+(challenge.monsterNo||1)))}</div><div id="battleMonsterSprite" class="battle-monster-sprite">${(challenge.monsterCfg||{}).image?`<img src="${esc((challenge.monsterCfg||{}).image)}" alt="${esc((challenge.monsterCfg||{}).name||'怪物')}">`:'👾'}</div><div class="hpbar"><div style="width:${Math.max(0,mhp/mmax*100)}%"></div></div><small>HP ${Math.ceil(mhp)} / ${mmax}</small></div>
   </div>`;
 }
 function playPetAttackAnimation(damage){
@@ -469,7 +514,12 @@ async function startChallengeUI(){
     const r=await gs('startChallengeBatch',currentId,challenge.subject,challenge.petId);
     if(!r.ok&&r.locked){showLocked(r);return;}
     challenge.questions=r.questions||[];challenge.qIndex=0;challenge.status={...r.status};challenge.pending=[];challenge.seen=[];
-    challenge.monsterNo=1;challenge.monsterMaxHp=100;challenge.monsterHp=100;challenge.selectedSkill=null;challenge.question=null;challenge.lastMsg='';
+    await loadMonsterCatalog();
+    challenge.monsterNo=1;
+    challenge.monsterCfg=getMonsterForBattle(challenge.subject,challenge.monsterNo);
+    challenge.monsterMaxHp=getMonsterHp(challenge.monsterCfg,challenge.monsterNo);
+    challenge.monsterHp=challenge.monsterMaxHp;
+    challenge.selectedSkill=null;challenge.question=null;challenge.lastMsg='';
     switchMainMode('battle');renderBattleMain();renderBattle();
   }catch(e){alert(e.message||e);}
 }
@@ -511,7 +561,8 @@ async function sendBattleAnswer(ans){
   if(challenge.monsterHp<=0){
     challenge.lastMsg+=`<br><span class="success">🏆 擊敗怪物！下一隻怪物出現。</span>`;
     challenge.monsterNo++;
-    challenge.monsterMaxHp=100+(challenge.monsterNo-1)*25;
+    challenge.monsterCfg=getMonsterForBattle(challenge.subject,challenge.monsterNo);
+    challenge.monsterMaxHp=getMonsterHp(challenge.monsterCfg,challenge.monsterNo);
     challenge.monsterHp=challenge.monsterMaxHp;
   }
   if(challenge.pending.length>=5)flushChallengeAnswers(false);
