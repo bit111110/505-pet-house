@@ -1,4 +1,4 @@
-const FRONTEND_BUILD='20261004-2010';
+const FRONTEND_BUILD='20261004-2100';
 const BUILTIN_LAND_BACKGROUNDS = {
   'LAND001': 'assets/maps/grassland.png',
   'LAND002': 'assets/maps/forest.png',
@@ -253,25 +253,35 @@ function applyStudentState(s){
 
 async function prefetchStudentData(){
   if(!currentId)return;
-  const jobs=[
-    gs('getMailboxFresh',currentId).then(r=>{
-      if(Array.isArray(r?.mailbox)){
-        mailbox=r.mailbox;mailboxLoaded=true;mailboxAt=Date.now();saveLocal('mailbox',mailbox);
-      }
-      if(state){
-        state.unreadMail=Number(r?.unreadMail||0);
-        mailBadge.textContent=state.unreadMail;
-        mailBadge.classList.toggle('hidden',!state.unreadMail);
-      }
-      if(currentTab==='mail')renderMailFromCache();
-    }).catch(()=>null),
-    gs('getInventory',currentId).then(r=>{
-      if(Array.isArray(r)){inventory=r;CLIENT_CACHE.inventory=r;CLIENT_CACHE.inventoryAt=Date.now();saveLocal('inventory',r);}
-    }).catch(()=>null),
-    refreshLiveLandCatalog(true).catch(()=>null),
-    loadMonsterCatalog().catch(()=>null)
-  ];
-  Promise.allSettled(jobs);
+  try{
+    // V5.8：原本登入後同時打 4 次 Apps Script，改成 1 次 bundle。
+    const r=await gs('getRuntimeBundleFast',currentId);
+
+    if(Array.isArray(r?.mailbox)){
+      mailbox=r.mailbox;mailboxLoaded=true;mailboxAt=Date.now();saveLocal('mailbox',mailbox);
+    }
+    if(Array.isArray(r?.inventory)){
+      inventory=r.inventory;CLIENT_CACHE.inventory=r;CLIENT_CACHE.inventoryAt=Date.now();saveLocal('inventory',r);
+    }
+    if(Array.isArray(r?.backgrounds)){
+      LIVE_LAND_CONFIGS=Object.fromEntries(r.backgrounds.map(x=>[String(x.landId),x]));
+      liveLandCatalogAt=Date.now();saveLocal('landCatalog',r.backgrounds);
+    }
+    if(Array.isArray(r?.monsters)){
+      MONSTER_LIST=r.monsters;
+      MONSTER_CONFIGS=Object.fromEntries(MONSTER_LIST.map(m=>[String(m.monsterId),m]));
+    }
+    if(state){
+      state.unreadMail=Number(r?.unreadMail||0);
+      mailBadge.textContent=state.unreadMail;
+      mailBadge.classList.toggle('hidden',!state.unreadMail);
+    }
+    if(currentTab==='mail')renderMailFromCache();
+    if(currentTab==='shop')renderShop();
+    if(mainMode==='battle')renderBattleMain();
+  }catch(e){
+    console.warn('背景預載失敗',e);
+  }
 }
 
 function startBackgroundMailboxRefresh(){
@@ -719,7 +729,12 @@ async function renderShop(){
   // 每次進入商店都直接抓一次試算表最新設定。
   // 不再拿舊 localStorage / GitHub JSON 判斷金幣或寶物分類。
   try{
-    await refreshLiveLandCatalog(false);
+    const rowsFast=await gs('getBackgroundCatalogFast');
+    if(Array.isArray(rowsFast)){
+      LIVE_LAND_CONFIGS=Object.fromEntries(rowsFast.map(r=>[String(r.landId),r]));
+      liveLandCatalogAt=Date.now();
+      saveLocal('landCatalog',rowsFast);
+    }
   }catch(e){
     panel.innerHTML=`<h3>🛒 土地／背景</h3><div class="itemcard"><b>⚠️ 背景設定同步失敗</b><br>${esc(e.message||e)}<br><br><button class="btn" onclick="renderShop()">重新同步</button></div>`;
     return;
@@ -772,7 +787,7 @@ async function renderShop(){
   };
 
   panel.innerHTML=`<h3>🛒 土地／背景</h3>
-  <div class="row" style="justify-content:space-between;align-items:center"><span class="success">✓ 已同步試算表最新設定</span><button class="btn gray" onclick="renderShop()">↻ 重新同步</button></div>
+  <div class="row" style="justify-content:space-between;align-items:center"><span class="success">✓ 已同步試算表最新設定</span><button class="btn gray" onclick="refreshLiveLandCatalog(true).then(()=>renderShop())">↻ 強制同步</button></div>
   <div class="home-section"><h4>➕ 購買土地</h4><p>每增加 1 格土地：🪙 2000</p><button class="btn" onclick="buyPlotUI()">購買 1 格土地</button></div>
   <h4>🪙 金幣背景</h4>
   <div class="shop-grid">${coinRows.map(cardHtml).join('')||'<div class="itemcard">目前沒有金幣背景。</div>'}</div>
