@@ -1,0 +1,164 @@
+[
+  {
+    "landId": "LAND001",
+    "name": "初始草地",
+    "price": 0,
+    "background": "assets/maps/MAP001.webp",
+    "width": 900,
+    "height": 560,
+    "enabled": true
+  },
+  {
+    "landId": "LAND002",
+    "name": "森林",
+    "price": 10000,
+    "background": "assets/maps/MAP002.webp",
+    "width": 900,
+    "height": 560,
+    "enabled": true
+  },
+  {
+    "landId": "LAND003",
+    "name": "海灘",
+    "price": 12000,
+    "background": "assets/maps/MAP003.webp",
+    "width": 900,
+    "height": 560,
+    "enabled": true
+  },
+  {
+    "landId": "LAND004",
+    "name": "雪地",
+    "price": 15000,
+    "background": "assets/maps/MAP004.webp",
+    "width": 900,
+    "height": 560,
+    "enabled": true
+  },
+  {
+    "landId": "LAND005",
+    "name": "小烏梅餅乾的閣樓",
+    "price": 20000,
+    "background": "assets/maps/MAP005.png",
+    "width": 900,
+    "height": 560,
+    "enabled": true
+  },
+  {
+    "landId": "LAND006",
+    "name": "戰場的紅霞",
+    "price": 20000,
+    "background": "assets/maps/MAP006.png",
+    "width": 900,
+    "height": 560,
+    "enabled": true
+  },
+  {
+    "landId": "LAND007",
+    "name": "流雲藏龍的天上人間",
+    "price": 20000,
+    "background": "assets/maps/MAP007.png",
+    "width": 900,
+    "height": 560,
+    "enabled": true
+  },
+  {
+    "landId": "LAND008",
+    "name": "靈魂俘虜的殿堂",
+    "price": 20000,
+    "background": "assets/maps/MAP008.png",
+    "width": 900,
+    "height": 560,
+    "enabled": true
+  },
+  {
+    "landId": "LAND009",
+    "name": "人魚的暑假生活",
+    "price": 20000,
+    "background": "assets/maps/MAP009.png",
+    "width": 900,
+    "height": 560,
+    "enabled": true
+  },
+  {
+    "landId": "LAND010",
+    "name": "狗狗的公園",
+    "price": 20000,
+    "background": "assets/maps/MAP010.png",
+    "width": 900,
+    "height": 560,
+    "enabled": true
+  },
+  {
+    "landId": "LAND011",
+    "name": "布丁店的午後時光",
+    "price": 20000,
+    "background": "assets/maps/MAP011.png",
+    "width": 900,
+    "height": 560,
+    "enabled": true
+  },
+  {
+    "landId": "LAND012",
+    "name": "五彩繽紛的遊戲時間",
+    "price": 20000,
+    "background": "assets/maps/MAP012.png",
+    "width": 900,
+    "height": 560,
+    "enabled": true
+  },
+  {
+    "landId": "LAND013",
+    "name": "庫洛米的秘密基地",
+    "price": 20000,
+    "background": "assets/maps/MAP013.png",
+    "width": 900,
+    "height": 560,
+    "enabled": true
+  },
+  {
+    "landId": "LAND014",
+    "name": "美樂蒂的郊遊準備",
+    "price": 20000,
+    "background": "assets/maps/MAP014.png",
+    "width": 900,
+    "height": 560,
+    "enabled": true
+  },
+  {
+    "landId": "LAND015",
+    "name": "無盡的深海底",
+    "price": 20000,
+    "background": "assets/maps/MAP015.png",
+    "width": 900,
+    "height": 560,
+    "enabled": true
+  },
+  {
+    "landId": "LAND016",
+    "name": "月光下的冰浪之塔",
+    "price": 20000,
+    "background": "assets/maps/MAP016.png",
+    "width": 900,
+    "height": 560,
+    "enabled": true
+  },
+  {
+    "landId": "LAND017",
+    "name": "星光閃閃的銀河湖畔",
+    "price": 20000,
+    "background": "assets/maps/MAP017.png",
+    "width": 900,
+    "height": 560,
+    "enabled": true
+  },
+  {
+    "landId": "LAND018",
+    "name": "神堂解除封印之日",
+    "price": 20000,
+    "background": "assets/maps/MAP018.png",
+    "width": 900,
+    "height": 560,
+    "enabled": true
+  }
+]
