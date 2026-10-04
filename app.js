@@ -1,22 +1,140 @@
-const FRONTEND_BUILD='20261004-0052';
+const FRONTEND_BUILD='20261004-1605';
 const BUILTIN_LAND_BACKGROUNDS = {
   'LAND001': 'assets/maps/grassland.png',
   'LAND002': 'assets/maps/forest.png',
   'LAND003': 'assets/maps/beach.png',
   'LAND004': 'assets/maps/snowfield.png'
+
 };
 
-let currentId='',state=null,currentTab='home',wanderTimer=null,inventory=[],mailbox=[],shop=null,adminData=null,challenge={subject:'',petId:'',question:null};
+let PET_CONFIGS = {};
+let LAND_CONFIGS = {};
+let STATIC_PETS = [];
+let STATIC_LANDS = [];
+
+async function loadStaticGameData(){
+  try{
+    const [pets,lands]=await Promise.all([
+      fetch('data/pets.json?v=' + FRONTEND_BUILD,{cache:'force-cache'}).then(r=>{
+        if(!r.ok)throw new Error('pets.json '+r.status);
+        return r.json();
+      }),
+      fetch('data/lands.json?v=' + FRONTEND_BUILD,{cache:'force-cache'}).then(r=>{
+        if(!r.ok)throw new Error('lands.json '+r.status);
+        return r.json();
+      })
+    ]);
+    STATIC_PETS=Array.isArray(pets)?pets:[];
+    STATIC_LANDS=Array.isArray(lands)?lands:[];
+    PET_CONFIGS=Object.fromEntries(STATIC_PETS.map(p=>[String(p.petId),p]));
+    LAND_CONFIGS=Object.fromEntries(STATIC_LANDS.map(l=>[String(l.landId),l]));
+    return true;
+  }catch(err){
+    console.warn('GitHub 固定資料載入失敗，改用 Apps Script 回傳資料。',err);
+    PET_CONFIGS={}; LAND_CONFIGS={}; STATIC_PETS=[]; STATIC_LANDS=[];
+    return false;
+  }
+}
+const STATIC_DATA_READY=loadStaticGameData();
+
+function getPetImage(petId,stage){
+  const cfg=PET_CONFIGS[String(petId)];
+  if(!cfg)return '';
+  const s=Number(stage||1);
+  return s>=3?(cfg.stage3||''):(s===2?(cfg.stage2||''):(cfg.stage1||''));
+}
+
+function applyStaticConfigsToState(s){
+  if(!s)return s;
+
+  if(Array.isArray(s.pets)){
+    s.pets=s.pets.map(p=>{
+      const cfg=PET_CONFIGS[String(p.petId)]||null;
+      if(!cfg)return p;
+      return {
+        ...p,
+        name:cfg.name||p.name||p.petId,
+        image:getPetImage(p.petId,p.stage)||p.image||'',
+        movementType:cfg.moveType||p.movementType||'地面型',
+        dialogs:(Array.isArray(cfg.dialogues)&&cfg.dialogues.length)
+          ? cfg.dialogues
+          : (Array.isArray(p.dialogs)&&p.dialogs.length?p.dialogs:['今天也一起努力吧！','我喜歡這裡～','一起變強吧！'])
+      };
+    });
+  }
+
+  if(Array.isArray(s.lands)){
+    s.lands=s.lands.map(l=>{
+      const id=String(l['土地ID']||l.landId||'');
+      const cfg=LAND_CONFIGS[id]||null;
+      if(!cfg)return l;
+      return {
+        ...l,
+        config:{
+          ...(l.config||{}),
+          '土地ID':cfg.landId,
+          '名稱':cfg.name,
+          '價格':cfg.price,
+          '背景圖片':cfg.background,
+          '寬度':cfg.width,
+          '高度':cfg.height,
+          '是否開放':cfg.enabled
+        }
+      };
+    });
+  }
+  return s;
+}
+
+function getLandShopRows(){
+  if(STATIC_LANDS.length){
+    return STATIC_LANDS.filter(l=>l.enabled!==false).map(l=>({
+      '土地ID':l.landId,
+      '名稱':l.name,
+      '價格':Number(l.price||0),
+      '背景圖片':l.background,
+      '寬度':l.width,
+      '高度':l.height,
+      '是否開放':l.enabled
+    }));
+  }
+  return Array.isArray(shop?.lands)?shop.lands:[];
+}
+
+let currentId='' '',state=null,currentTab='home',wanderTimer=null,inventory=[],mailbox=[],shop=null,adminData=null,challenge={subject:'',petId:'',question:null};
 let mailboxLoaded=false,mailboxAt=0,mailRefreshPromise=null,backgroundMailTimer=null;
 const CLIENT_CACHE={shop:null,shopAt:0,inventory:null,inventoryAt:0};
 function cacheFresh(ts,ms=300000){return Date.now()-ts<ms;}
+
+const LOCAL_TTL=24*60*60*1000;
+function localKey(kind,id=currentId){return `petHouse:${kind}:${id}`;}
+function saveLocal(kind,value){
+  try{localStorage.setItem(localKey(kind),JSON.stringify({at:Date.now(),value}));}catch(e){}
+}
+function loadLocal(kind,maxAge=LOCAL_TTL){
+  try{
+    const raw=localStorage.getItem(localKey(kind));
+    if(!raw)return null;
+    const obj=JSON.parse(raw);
+    if(!obj || Date.now()-Number(obj.at||0)>maxAge)return null;
+    return obj.value;
+  }catch(e){return null;}
+}
+function hydrateLocalStudentCache(){
+  const m=loadLocal('mailbox');
+  if(Array.isArray(m)){mailbox=m;mailboxLoaded=true;mailboxAt=Date.now();}
+  const inv=loadLocal('inventory');
+  if(Array.isArray(inv)){inventory=inv;CLIENT_CACHE.inventory=inv;CLIENT_CACHE.inventoryAt=Date.now();}
+  const sh=loadLocal('shop');
+  if(sh){shop=sh;CLIENT_CACHE.shop=sh;CLIENT_CACHE.shopAt=Date.now();}
+}
 
 async function gs(fn,...args){
   if(!window.API_URL || /PASTE|YOUR|貼上/i.test(window.API_URL)){
     throw new Error('尚未設定 Apps Script API 網址。請打開 config.js 貼上部署後的 /exec 網址。');
   }
   const controller=new AbortController();
-  const timer=setTimeout(()=>controller.abort(),15000);
+  const timer=setTimeout(()=>controller.abort(),25000);
   try{
     const response=await fetch(window.API_URL,{
       method:'POST',
@@ -39,7 +157,7 @@ async function gs(fn,...args){
 function esc(v){return String(v??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#39;');}
 
 function applyStudentState(s){
-  state=s;
+  state=applyStaticConfigsToState(s);
   if(!state)throw new Error('後端回傳空值。');
   if(!state.ok)throw new Error(state.message||'讀取學生資料失敗');
   state.pets=Array.isArray(state.pets)?state.pets:[];
@@ -55,6 +173,34 @@ function applyStudentState(s){
   mailBadge.classList.toggle('hidden',!state.unreadMail);
   renderYard();
 }
+
+async function prefetchStudentData(){
+  if(!currentId)return;
+  const jobs=[
+    gs('getMailboxFresh',currentId).then(r=>{
+      if(Array.isArray(r?.mailbox)){
+        mailbox=r.mailbox;mailboxLoaded=true;mailboxAt=Date.now();saveLocal('mailbox',mailbox);
+      }
+      if(state){
+        state.unreadMail=Number(r?.unreadMail||0);
+        mailBadge.textContent=state.unreadMail;
+        mailBadge.classList.toggle('hidden',!state.unreadMail);
+      }
+      if(currentTab==='mail')renderMailFromCache();
+    }).catch(()=>null),
+    gs('getInventory',currentId).then(r=>{
+      if(Array.isArray(r)){inventory=r;CLIENT_CACHE.inventory=r;CLIENT_CACHE.inventoryAt=Date.now();saveLocal('inventory',r);}
+    }).catch(()=>null),
+    Promise.resolve().then(()=>{
+      if(STATIC_LANDS.length){
+        shop={lands:getLandShopRows(),furniture:[]};
+        CLIENT_CACHE.shop=shop;CLIENT_CACHE.shopAt=Date.now();saveLocal('shop',shop);
+      }
+    })
+  ];
+  Promise.allSettled(jobs);
+}
+
 function startBackgroundMailboxRefresh(){
   if(backgroundMailTimer)clearInterval(backgroundMailTimer);
   // 進站後延遲 45 秒再背景更新，之後每 5 分鐘更新一次，不阻塞任何按鈕。
@@ -66,7 +212,7 @@ async function refreshMailboxInBackground(forceRender=false){
   if(mailRefreshPromise)return mailRefreshPromise;
   mailRefreshPromise=gs('getMailboxFresh',currentId)
     .then(r=>{
-      if(Array.isArray(r?.mailbox))mailbox=r.mailbox;
+      if(Array.isArray(r?.mailbox)){mailbox=r.mailbox;saveLocal('mailbox',mailbox);}
       mailboxLoaded=true;mailboxAt=Date.now();
       if(state){
         state.unreadMail=Number(r?.unreadMail||0);
@@ -84,17 +230,27 @@ async function login(){
   const id=sid.value.trim(),bd=bday.value;
   loginMsg.textContent='登入中…';
   try{
-    const r=await gs('loginBootstrap',id,bd);
+    // V5.3：登入只拿首頁必要資料，不再同步掃信箱/背包/商店。
+    const loginPromise=gs('loginCore',id,bd);
+    await STATIC_DATA_READY;
+    const r=await loginPromise;
     if(!r){loginMsg.textContent='登入失敗：後端沒有回傳資料。';return;}
     if(!r.ok){loginMsg.textContent=r.message||'登入失敗';return;}
+
     currentId=id;
+    hydrateLocalStudentCache();
+
     loginView.classList.add('hidden');
     studentView.classList.remove('hidden');
     applyStudentState(r.state);
+
     currentTab='home';
     document.querySelectorAll('.tabbtn').forEach(x=>x.classList.remove('active'));
     document.querySelector('[data-tab="home"]')?.classList.add('active');
     renderHome();
+
+    // UI 已經顯示後才背景預抓；不阻塞登入。
+    prefetchStudentData();
     startBackgroundMailboxRefresh();
   }catch(e){loginMsg.textContent=e.message||e;}
 }
@@ -137,7 +293,7 @@ function renderYard(){
   if(wanderTimer)clearInterval(wanderTimer);
   wanderTimer=setInterval(wanderPets,3800);
 }
-function createPet(p,i){const y=document.getElementById('yard'),wrap=document.createElement('div');wrap.className='pet-pos';wrap.dataset.pet=p.petId;let px=Math.max(2,Math.min(88,Number(p.x)||45));let py=Number(p.y)||70;if(p.movementType==='地面型')py=Math.max(55,Math.min(82,py));else py=Math.max(8,Math.min(82,py));wrap.style.left=px+'%';wrap.style.top=py+'%';const alive=document.createElement('div');alive.className='pet-alive';alive.style.animationDuration=(1.9+(i%5)*.17)+'s';if(p.image){const img=document.createElement('img');img.src=p.image;img.onerror=()=>alive.innerHTML=`<div class="fallback">🐾<br>${esc(p.petId)}</div>`;alive.appendChild(img);}else alive.innerHTML=`<div class="fallback">🐾<br>${esc(p.petId)}</div>`;wrap.appendChild(alive);wrap.onclick=()=>petTalk(p,wrap);y.appendChild(wrap);}
+function createPet(p,i){const y=document.getElementById('yard'),wrap=document.createElement('div');wrap.className='pet-pos';wrap.dataset.pet=p.petId;let px=Math.max(2,Math.min(88,Number(p.x)||45));let py=Number(p.y)||70;if(p.movementType==='地面型')py=Math.max(55,Math.min(82,py));else py=Math.max(8,Math.min(82,py));wrap.style.left=px+'%';wrap.style.top=py+'%';const alive=document.createElement('div');alive.className='pet-alive';alive.style.animationDuration=(1.9+(i%5)*.17)+'s';const petImg=getPetImage(p.petId,p.stage)||p.image||'';if(petImg){const img=document.createElement('img');img.src=petImg;img.loading='eager';img.decoding='async';img.onerror=()=>alive.innerHTML=`<div class="fallback">🐾<br>${esc(p.petId)}</div>`;alive.appendChild(img);}else alive.innerHTML=`<div class="fallback">🐾<br>${esc(p.petId)}</div>`;wrap.appendChild(alive);wrap.onclick=()=>petTalk(p,wrap);y.appendChild(wrap);}
 function wanderPets(){
   if(!state)return;
   const moved=[];
@@ -170,7 +326,7 @@ async function useExp(itemId){
     const r=await gs('useExpItem',currentId,itemId,petId,qty);
     inventory=Array.isArray(r.inventory)?r.inventory:inventory;
     const p=state.pets.find(x=>x.petId===petId);
-    if(p){p.level=Number(r.level||p.level);p.exp=Number(r.exp??p.exp);p.stage=Number(r.stage||p.stage);p.expNeed=Number(r.expNeed||p.expNeed);if(r.image)p.image=r.image;}
+    if(p){p.level=Number(r.level||p.level);p.exp=Number(r.exp??p.exp);p.stage=Number(r.stage||p.stage);p.expNeed=Number(r.expNeed||p.expNeed);p.image=getPetImage(p.petId,p.stage)||r.image||p.image;}
     await renderUpgrade();renderYard();
     const note=document.createElement('div');note.className='success';note.textContent=`✅ +${r.gained} EXP`;panel.prepend(note);setTimeout(()=>note.remove(),1400);
   }catch(e){alert(e.message||e);}
@@ -228,6 +384,10 @@ async function finishChallengeUI(){try{await flushChallengeAnswers(true);await r
 function showLocked(r){panel.innerHTML=`<div class="qbox"><h3>今天這科已挑戰結束</h3><p>明早 7:00 後會重新有 3 次機會。</p><p>重置：${esc(r.resetAt)}</p><button class="btn gray" onclick="renderChallengeHome()">返回</button></div>`;}
 async function renderMail(){
   // 有快取就立刻畫出來，不等待 Apps Script。
+  if(!mailboxLoaded){
+    const local=loadLocal('mailbox');
+    if(Array.isArray(local)){mailbox=local;mailboxLoaded=true;mailboxAt=Date.now();}
+  }
   if(mailboxLoaded){
     renderMailFromCache();
     // 超過 60 秒才在背景偷偷更新，不阻塞畫面。
@@ -252,10 +412,11 @@ async function claimMailUI(id){
   mailBadge.textContent=state?.unreadMail||0;
   mailBadge.classList.toggle('hidden',!(state?.unreadMail));
   renderMailFromCache();
+  saveLocal('mailbox',mailbox);
 
   try{
     const r=await gs('claimMailFast',currentId,id);
-    if(Array.isArray(r?.inventory)){inventory=r.inventory;CLIENT_CACHE.inventory=inventory;CLIENT_CACHE.inventoryAt=Date.now();}
+    if(Array.isArray(r?.inventory)){inventory=r.inventory;CLIENT_CACHE.inventory=inventory;CLIENT_CACHE.inventoryAt=Date.now();saveLocal('inventory',inventory);}
     if(state){
       state.unreadMail=Number(r?.unreadMail??state.unreadMail);
       mailBadge.textContent=state.unreadMail;
@@ -271,8 +432,13 @@ async function claimMailUI(id){
     alert(e.message||e);
   }
 }
-async function renderShop(){if(!shop)shop=await gs('getShop');const owned=new Set(state.lands.map(x=>String(x['土地ID'])));panel.innerHTML=`<h3>🗺️ 土地商店</h3><p class="small">買新土地後，可以讓不同寵物住在不同地圖。</p>${shop.lands.map(l=>`<div class="itemcard"><b>${esc(l['名稱'])}</b>　🪙${l['價格']}<br><button class="btn ${owned.has(String(l['土地ID']))?'gray':'secondary'}" ${owned.has(String(l['土地ID']))?'disabled':''} onclick="buyLandUI('${l['土地ID']}')">${owned.has(String(l['土地ID']))?'已擁有':'購買'}</button></div>`).join('')}`;}
-async function buyLandUI(id){try{const r=await gs('buyLandFast',currentId,id);if(r.land&&!state.lands.some(x=>String(x['土地ID'])===String(id)))state.lands.push(r.land);state.student.coins=Number(r.coins||0);coins.textContent=state.student.coins;renderYard();await renderShop();}catch(e){alert(e.message||e);}}
+async function renderShop(){if(!shop){if(STATIC_LANDS.length)shop={lands:getLandShopRows(),furniture:[]};else shop=await gs('getShop');}const rows=STATIC_LANDS.length?getLandShopRows():shop.lands;const owned=new Set(state.lands.map(x=>String(x['土地ID'])));panel.innerHTML=`<h3>🗺️ 土地商店</h3><p class="small">買新土地後，可以讓不同寵物住在不同地圖。</p>${rows.map(l=>`<div class="itemcard"><b>${esc(l['名稱'])}</b>　🪙${l['價格']}<br><button class="btn ${owned.has(String(l['土地ID']))?'gray':'secondary'}" ${owned.has(String(l['土地ID']))?'disabled':''} onclick="buyLandUI('${l['土地ID']}')">${owned.has(String(l['土地ID']))?'已擁有':'購買'}</button></div>`).join('')}`;}
+async function buyLandUI(id){try{const r=await gs('buyLandFast',currentId,id);if(r.land&&!state.lands.some(x=>String(x['土地ID'])===String(id))){
+      const tmp={...r.land};
+      const cfg=LAND_CONFIGS[String(id)];
+      if(cfg)tmp.config={...(tmp.config||{}),'土地ID':cfg.landId,'名稱':cfg.name,'價格':cfg.price,'背景圖片':cfg.background,'寬度':cfg.width,'高度':cfg.height,'是否開放':cfg.enabled};
+      state.lands.push(tmp);
+    }state.student.coins=Number(r.coins||0);coins.textContent=state.student.coins;renderYard();await renderShop();}catch(e){alert(e.message||e);}}
 function logout(){
   currentId='';state=null;inventory=[];mailbox=[];shop=null;mailboxLoaded=false;mailboxAt=0;
   if(wanderTimer)clearInterval(wanderTimer);

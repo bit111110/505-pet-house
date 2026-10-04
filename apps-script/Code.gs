@@ -4,7 +4,7 @@
  * Google Apps Script + Google 試算表
  */
 
-const APP_VERSION='V5.2';
+const APP_VERSION='V5.3';
 const TZ = 'Asia/Taipei';
 
 const SHEETS = {
@@ -190,6 +190,52 @@ function loginBootstrap(studentId,birthday){
   const s=getStudentState(studentId);
   return {ok:true,name:auth.name,version:APP_VERSION,state:s};
 }
+
+/**
+ * V5.3 快速登入：
+ * 只驗證登入並取得首頁必要資料。
+ * 不在登入階段讀信箱、背包、商店、挑戰紀錄，也不補整點禮物。
+ */
+function loginCore(studentId,birthday){
+  const auth=login(studentId,birthday);
+  if(!auth || !auth.ok) return auth;
+  return {ok:true,name:auth.name,version:APP_VERSION,state:getStudentCoreState_(studentId)};
+}
+
+function getStudentCoreState_(studentId){
+  const id=String(studentId||'').trim();
+  ensureStarterData_(id);
+
+  const ss=SpreadsheetApp.getActive();
+  const student=getStudent_(id);
+  if(!student)return {ok:false,message:'找不到學生'};
+
+  const petCfg=cachedObjects_(SHEETS.PET_CONFIG,300);
+  const cfgMap={}; petCfg.forEach(x=>cfgMap[String(x['寵物ID'])]=x);
+  const petRows=readObjects_(ss.getSheetByName(SHEETS.PETS))
+    .filter(x=>String(x['學號']).trim()===id);
+  const pets=petRows.map(p=>decoratePet_(p,cfgMap[String(p['寵物ID'])]||{}));
+
+  const landCfg=cachedObjects_(SHEETS.LANDS,300);
+  const landMap={}; landCfg.forEach(x=>landMap[String(x['土地ID'])]=x);
+  const studentLands=readObjects_(ss.getSheetByName(SHEETS.STUDENT_LANDS))
+    .filter(x=>String(x['學號']).trim()===id && x['是否擁有']!==false);
+  const active=studentLands.find(x=>x['是否使用']===true || String(x['是否使用']).toUpperCase()==='TRUE') || studentLands[0];
+  const activeLandId=active?String(active['土地ID']):'LAND001';
+  const lands=studentLands.map(x=>({...x,config:landMap[String(x['土地ID'])]||{}}));
+
+  const furnCfg=cachedObjects_(SHEETS.FURNITURE,300);
+  const fMap={}; furnCfg.forEach(x=>fMap[String(x['家具ID'])]=x);
+  const furniture=readObjects_(ss.getSheetByName(SHEETS.STUDENT_FURNITURE))
+    .filter(x=>String(x['學號']).trim()===id && String(x['土地ID']||'LAND001')===activeLandId)
+    .map(x=>({...x,config:fMap[String(x['家具ID'])]||{}}));
+
+  return safeForClient_({
+    ok:true,version:APP_VERSION,student,pets,lands,activeLandId,furniture,
+    unreadMail:0
+  });
+}
+
 
 
 /** V4.5 效能快取：不常變動的設定資料只每 5 分鐘讀一次試算表 */
@@ -794,6 +840,7 @@ function doPost(e) {
     const API = {
       login: login,
       loginBootstrap: loginBootstrap,
+      loginCore: loginCore,
       getStudentState: getStudentState,
       getInventory: getInventory,
       getShop: getShop,
