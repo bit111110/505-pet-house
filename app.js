@@ -1,4 +1,4 @@
-const FRONTEND_BUILD='20261004-2200';
+const FRONTEND_BUILD='20261004-2230';
 const BUILTIN_LAND_BACKGROUNDS = {
   'LAND001': 'assets/maps/grassland.png',
   'LAND002': 'assets/maps/forest.png',
@@ -405,6 +405,26 @@ function getMonsterHp(monster,no){
 }
 
 
+
+const ATTRIBUTE_SHEET='assets/attributes/attributes.png';
+const ATTRIBUTE_ORDER=['光','地','暗','草','水','毒','火','電','冰','風','鋼','混沌'];
+const ATTRIBUTE_GRID={cols:4,rows:3};
+
+function attributeIndex(attr){
+  return ATTRIBUTE_ORDER.indexOf(String(attr||'光'));
+}
+function attributeIconHtml(attr,size=24){
+  const i=attributeIndex(attr);
+  if(i<0)return '';
+  const col=i%ATTRIBUTE_GRID.cols,row=Math.floor(i/ATTRIBUTE_GRID.cols);
+  return `<span class="attribute-sprite" style="
+    width:${size}px;height:${size}px;
+    background-image:url('${ATTRIBUTE_SHEET}');
+    background-size:${ATTRIBUTE_GRID.cols*size}px ${ATTRIBUTE_GRID.rows*size}px;
+    background-position:-${col*size}px -${row*size}px;
+  "></span>`;
+}
+
 function getBattleBackground(subject){
   const list=(BATTLE_BG_LIST||[]).filter(x=>x.enabled!==false && (String(x.subject||'全部')==='全部'||String(x.subject)===String(subject||'')));
   return list[0]||null;
@@ -449,7 +469,7 @@ function renderBattleMain(){
   root.innerHTML=`<div class="battle-main-scene" ${battleBg?.image?`style="background-image:url('${esc(battleBg.image)}');background-size:cover;background-position:center"`:''}>
     ${battleBg?.image?'':'<div class="battle-sky"></div><div class="battle-ground"></div>'}
     <div class="battle-status"><div><b>${esc(challenge.subject)}對戰</b>　怪物 ${challenge.monsterNo||1}</div><div>答對 ${challenge.status?.correct||0}　<span class="lives">${'❤️'.repeat(Math.max(0,3-(challenge.status?.wrong||0)))}${'🖤'.repeat(challenge.status?.wrong||0)}</span></div></div>
-    <div class="battle-pet-side"><div class="battle-pet-name">${esc(pet.name)} <span class="small">【${esc(getPetAttribute(pet))}】</span></div><div id="battlePetSprite" class="battle-pet-sprite">${getPetImage(pet.petId,pet.stage)?`<img src="${getPetImage(pet.petId,pet.stage)}">`:'🐾'}</div></div>
+    <div class="battle-pet-side"><div class="battle-pet-name">${attributeIconHtml(getPetAttribute(pet),26)} ${esc(pet.name)} <span class="small">【${esc(getPetAttribute(pet))}】</span></div><div id="battlePetSprite" class="battle-pet-sprite">${getPetImage(pet.petId,pet.stage)?`<img src="${getPetImage(pet.petId,pet.stage)}">`:'🐾'}</div></div>
     <div class="battle-monster-side"><div class="battle-monster-name">${esc((challenge.monsterCfg||{}).name||('怪物 '+(challenge.monsterNo||1)))}</div><div id="battleMonsterSprite" class="battle-monster-sprite">${(challenge.monsterCfg||{}).image?`<img src="${esc((challenge.monsterCfg||{}).image)}" alt="${esc((challenge.monsterCfg||{}).name||'怪物')}">`:'👾'}</div><div class="hpbar"><div style="width:${Math.max(0,mhp/mmax*100)}%"></div></div><small>HP ${Math.ceil(mhp)} / ${mmax}</small></div>
   </div>`;
 }
@@ -566,7 +586,7 @@ function renderBattle(){
   panel.innerHTML=`<h3>⚔️ ${esc(challenge.subject)}對戰控制</h3>
   <div class="petcard"><b>${esc(pet.name)}</b> Lv.${pet.level}・第${pet.stage}階<br><span class="small">怪物 ${challenge.monsterNo}｜HP ${Math.ceil(challenge.monsterHp)} / ${challenge.monsterMaxHp}</span></div>
   ${challenge.lastMsg?`<div style="margin:8px 0">${challenge.lastMsg}</div>`:''}
-  <h4>選擇技能</h4><div class="skill-grid">${skills.map(s=>`<button class="btn purple skill-btn" onclick="useBattleSkill('${s.id}')"><b>${esc(s.icon||'✨')} ${esc(s.name)}</b><br><span class="small" style="color:white">威力 ${s.damage}</span></button>`).join('')}</div>
+  <h4>選擇技能</h4><div class="skill-grid">${skills.map(s=>`<button class="btn purple skill-btn" onclick="useBattleSkill('${s.id}')"><b>${attributeIconHtml(s.attribute||getPetAttribute(pet),20)} ${esc(s.icon||'✨')} ${esc(s.name)}</b><br><span class="small" style="color:white">威力 ${s.damage}</span></button>`).join('')}</div>
   <div class="nav"><button class="btn gray" onclick="finishChallengeUI()">結束對戰</button><button class="btn secondary" onclick="switchMainMode('home')">看一下小屋</button></div>`;
 }
 function useBattleSkill(skillId){const pet=state.pets.find(p=>p.petId===challenge.petId);const skill=getConfiguredPetSkills(pet).find(s=>String(s.id)===String(skillId));if(!skill)return;challenge.selectedSkill=skill;if(!challenge.questions?.length || challenge.qIndex>=challenge.questions.length){loadMoreBattleQuestions();return;}challenge.question=challenge.questions[challenge.qIndex];renderBattleQuestion();}
