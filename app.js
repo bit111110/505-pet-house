@@ -1,4 +1,4 @@
-const FRONTEND_BUILD='20261004-1705';
+const FRONTEND_BUILD='20261004-1735';
 const BUILTIN_LAND_BACKGROUNDS = {
   'LAND001': 'assets/maps/grassland.png',
   'LAND002': 'assets/maps/forest.png',
@@ -326,7 +326,7 @@ function renderHome(){
 function petCardHtml(p){const pct=Math.min(100,p.exp/p.expNeed*100);return `<div class="petcard"><b>${esc(p.nickname||p.name)}</b> <span class="small">${esc(p.movementType)}</span><br>Lv.${p.level}・第${p.stage}階<div class="xp"><div style="width:${pct}%"></div></div><small>EXP ${p.exp}/${p.expNeed}</small></div>`;}
 async function changeLand(id){try{const r=await gs('setActiveLandFast',currentId,id);state.activeLandId=r.activeLandId;state.furniture=Array.isArray(r.furniture)?r.furniture:[];renderYard();renderHome();}catch(e){alert(e.message||e);}}
 async function movePetUI(petId){const sel=document.getElementById('plot-'+petId);if(!sel)return;try{await gs('movePetToLand',currentId,petId,sel.value);const p=state.pets.find(x=>x.petId===petId);if(p)p.landId=sel.value;renderYard();renderHome();}catch(e){alert(e.message||e);}}
-async function applyHomeBackground(){const bg=document.getElementById('homeBg')?.value;if(!bg)return;try{const r=await gs('setPlotBackgroundFast',currentId,state.activeLandId,bg);const plot=state.lands.find(l=>String(l['土地ID'])===String(state.activeLandId));if(plot){plot.backgroundId=bg;plot['背景ID']=bg;plot.config=LAND_CONFIGS[bg]||plot.config;}renderYard();renderHome();}catch(e){alert(e.message||e);}}
+async function applyHomeBackground(){const bg=document.getElementById('homeBg')?.value;if(!bg)return;await useBackgroundFromShop(bg);}
 async function renderUpgrade(){if(!Array.isArray(inventory)||!inventory.length)inventory=await gs('getInventory',currentId);const expItems=inventory.filter(x=>x.config?.['類型']==='經驗型');panel.innerHTML=`<h3>⬆️ 寵物升級</h3><label>選擇寵物</label><select id="upPet" class="full">${state.pets.map(p=>`<option value="${p.petId}">${esc(p.name)} Lv.${p.level}</option>`).join('')}</select><div id="upPetInfo" style="margin-top:8px"></div><h4>使用經驗道具</h4>${expItems.length?expItems.map(x=>`<div class="itemcard"><b>${esc(x.config['名稱'])}</b> ×${x.quantity}<br><span class="small">+${x.config['效果值']} EXP/個</span><div class="row" style="margin-top:6px"><input id="qty-${x.itemId}" type="number" min="1" max="${x.quantity}" value="1" style="width:80px"><button class="btn" onclick="useExp('${x.itemId}')">使用</button></div></div>`).join(''):'<div class="itemcard">目前沒有經驗型道具。</div>'}`;upPet.onchange=renderUpPetInfo;renderUpPetInfo();}
 function renderUpPetInfo(){const p=state.pets.find(x=>x.petId===upPet.value);if(p)upPetInfo.innerHTML=petCardHtml(p);}
 async function useExp(itemId){
@@ -452,9 +452,73 @@ async function claimMailUI(id){
     alert(e.message||e);
   }
 }
-async function renderShop(){const ownedBg=new Set((state.backgrounds||[]).map(String));panel.innerHTML=`<h3>🛒 土地與背景</h3><div class="home-section"><h4>➕ 購買土地</h4><p>每購買一次增加 1 格土地。</p><p><b>價格：🪙 2000</b></p><button class="btn secondary" onclick="buyPlotUI()">購買 +1 土地</button></div><h4>🖼️ 背景商店</h4><div class="shop-grid">${STATIC_LANDS.filter(l=>l.enabled!==false).map(bg=>`<div class="itemcard"><b>${esc(bg.name)}</b><div class="bg-thumb" style="background-image:url('${esc(bg.background)}')"></div><span>🪙 ${Number(bg.price||0)}</span><br><button class="btn ${ownedBg.has(String(bg.landId))?'gray':'blue'}" ${ownedBg.has(String(bg.landId))?'disabled':''} onclick="buyBackgroundUI('${bg.landId}')">${ownedBg.has(String(bg.landId))?'已擁有':'購買背景'}</button></div>`).join('')}</div>`;}
-async function buyPlotUI(){try{const r=await gs('buyPlotFast',currentId);state.student.coins=r.coins;coins.textContent=r.coins;if(r.plot)state.lands.push(applyStaticConfigsToState({lands:[r.plot]}).lands[0]);renderYard();renderShop();}catch(e){alert(e.message||e);}}
-async function buyBackgroundUI(id){try{const r=await gs('buyBackgroundFast',currentId,id);state.student.coins=r.coins;coins.textContent=r.coins;state.backgrounds=Array.isArray(r.backgrounds)?r.backgrounds:state.backgrounds;renderShop();}catch(e){alert(e.message||e);}}
+let purchaseBusy=false,purchaseDotsTimer=null;
+function showPurchaseBusy(text='購買中'){
+  if(purchaseBusy)return false;
+  purchaseBusy=true;
+  const ov=document.getElementById('purchaseBusyOverlay');
+  const t=document.getElementById('purchaseBusyText');
+  const d=document.getElementById('purchaseBusyDots');
+  if(t)t.textContent=text;
+  if(ov)ov.classList.remove('hidden');
+  const seq=['.','..','...','..','.','..','...','..'];let i=0;
+  if(d)d.textContent=seq[0];
+  clearInterval(purchaseDotsTimer);
+  purchaseDotsTimer=setInterval(()=>{i=(i+1)%seq.length;if(d)d.textContent=seq[i];},320);
+  return true;
+}
+function hidePurchaseBusy(){
+  purchaseBusy=false;
+  clearInterval(purchaseDotsTimer);purchaseDotsTimer=null;
+  document.getElementById('purchaseBusyOverlay')?.classList.add('hidden');
+}
+
+async function renderShop(){
+  const ownedBg=new Set((state.backgrounds||[]).map(String));
+  const activePlot=state.lands.find(l=>String(l['土地ID'])===String(state.activeLandId));
+  panel.innerHTML=`<h3>🛒 土地與背景</h3>
+  <div class="home-section"><h4>➕ 購買土地</h4><p>每購買一次增加 1 格土地。</p><p><b>價格：🪙 2000</b></p><button class="btn secondary" onclick="buyPlotUI()">購買 +1 土地</button></div>
+  <h4>🖼️ 背景商店</h4><div class="shop-grid">${STATIC_LANDS.filter(l=>l.enabled!==false).map(bg=>{
+    const owned=ownedBg.has(String(bg.landId));
+    const using=String(activePlot?.backgroundId)===String(bg.landId);
+    return `<div class="itemcard"><b>${esc(bg.name)}</b><div class="bg-thumb" style="background-image:url('${esc(bg.background)}')"></div><span>🪙 ${Number(bg.price||0)}</span><br>${owned?`<button class="btn ${using?'gray':'blue'}" ${using?'disabled':''} onclick="useBackgroundFromShop('${bg.landId}')">${using?'目前使用中':'套用到目前土地'}</button>`:`<button class="btn blue" onclick="buyBackgroundUI('${bg.landId}')">購買背景</button>`}</div>`;
+  }).join('')}</div>`;
+}
+async function buyPlotUI(){
+  if(!showPurchaseBusy('購買土地中'))return;
+  try{
+    const r=await gs('buyPlotFast',currentId);
+    state.student.coins=r.coins;coins.textContent=r.coins;
+    if(r.plot&&!state.lands.some(l=>String(l['土地ID'])===String(r.plot['土地ID']))){
+      state.lands.push(applyStaticConfigsToState({lands:[r.plot]}).lands[0]);
+    }
+    renderYard();renderShop();
+  }catch(e){alert(e.message||e);}finally{hidePurchaseBusy();}
+}
+async function buyBackgroundUI(id){
+  if(!showPurchaseBusy('購買背景中'))return;
+  try{
+    const r=await gs('buyBackgroundFast',currentId,id);
+    state.student.coins=r.coins;coins.textContent=r.coins;
+    state.backgrounds=Array.isArray(r.backgrounds)?r.backgrounds:state.backgrounds;
+    renderShop();
+  }catch(e){alert(e.message||e);}finally{hidePurchaseBusy();}
+}
+async function useBackgroundFromShop(id){
+  const plot=state.lands.find(l=>String(l['土地ID'])===String(state.activeLandId));
+  if(!plot)return alert('找不到目前土地');
+  const oldBg=plot.backgroundId,oldConfig=plot.config;
+  const cfg=LAND_CONFIGS[String(id)];
+  if(!cfg)return alert('找不到背景設定');
+  // 先立即換畫面，避免學生覺得按鈕沒有作用。
+  plot.backgroundId=String(id);plot['背景ID']=String(id);plot.config={...(plot.config||{}),'土地ID':cfg.landId,'名稱':cfg.name,'價格':cfg.price,'背景圖片':cfg.background,'寬度':cfg.width,'高度':cfg.height,'是否開放':cfg.enabled};
+  renderYard();renderHome();
+  try{
+    await gs('setPlotBackgroundFast',currentId,state.activeLandId,id);
+  }catch(e){
+    plot.backgroundId=oldBg;plot['背景ID']=oldBg;plot.config=oldConfig;renderYard();renderHome();alert('背景套用失敗：'+(e.message||e));
+  }
+}
 function logout(){
   currentId='';state=null;inventory=[];mailbox=[];shop=null;mailboxLoaded=false;mailboxAt=0;adminPassword='';sessionStorage.removeItem('petHouseAdminPassword');
   if(wanderTimer)clearInterval(wanderTimer);
