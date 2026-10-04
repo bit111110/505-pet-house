@@ -1,4 +1,4 @@
-const FRONTEND_BUILD='20261004-1815';
+const FRONTEND_BUILD='20261004-1845';
 const BUILTIN_LAND_BACKGROUNDS = {
   'LAND001': 'assets/maps/grassland.png',
   'LAND002': 'assets/maps/forest.png',
@@ -614,11 +614,17 @@ function inventoryQty(itemId){
   return Number(row?.quantity||0);
 }
 function backgroundAcquireInfo(bg){
-  const method=String(bg['取得方式']||bg.acquireType||'金幣').trim();
-  const itemId=String(bg['兌換道具ID']||bg.exchangeItemId||'').trim();
-  const qty=Number(bg['兌換數量']||bg.exchangeQty||0);
-  const itemName=String(bg['兌換道具名稱']||bg.exchangeItemName||itemId);
-  return {method,itemId,qty,itemName};
+  const raw=String(bg['取得方式']??bg.acquireType??'').trim();
+  const method=(raw==='寶物'||raw.includes('兌換'))?'寶物':'金幣';
+  const coinPriceRaw=(bg['價格']??bg.price);
+  const coinPrice=(coinPriceRaw===''||coinPriceRaw===null||coinPriceRaw===undefined)?null:Number(coinPriceRaw);
+  const itemId=String(bg['兌換道具ID']??bg.exchangeItemId??'').trim();
+  const qtyRaw=(bg['兌換數量']??bg.exchangeQty);
+  const qty=(qtyRaw===''||qtyRaw===null||qtyRaw===undefined)?null:Number(qtyRaw);
+  const itemName=String(bg['兌換道具名稱']??bg.exchangeItemName??itemId);
+  const validCoin=method==='金幣' && Number.isFinite(coinPrice) && coinPrice>0;
+  const validTreasure=method==='寶物' && !!itemId && Number.isFinite(qty) && qty>0;
+  return {method,coinPrice,itemId,qty,itemName,validCoin,validTreasure};
 }
 async function redeemBackgroundUI(id){
   const bg=getLandShopRows().find(x=>String(x['土地ID'])===String(id));if(!bg)return;
@@ -642,26 +648,63 @@ async function renderShop(){
   if(!inventory.length){
     try{inventory=await gs('getInventory',currentId);}catch(e){}
   }
+
   const ownedBg=new Set((state.backgrounds||[]).map(String));
   const activePlot=state.lands.find(x=>String(x['土地ID'])===String(state.activeLandId))||state.lands[0];
   const rows=getLandShopRows();
+
+  const coinRows=rows.filter(bg=>backgroundAcquireInfo(bg).method==='金幣');
+  const treasureRows=rows.filter(bg=>backgroundAcquireInfo(bg).method==='寶物');
+
+  const cardHtml=(bg)=>{
+    const id=String(bg['土地ID']);
+    const owned=ownedBg.has(id);
+    const using=String(activePlot?.backgroundId)===id;
+    const ex=backgroundAcquireInfo(bg);
+
+    let costLine='',action='';
+    if(ex.method==='寶物'){
+      const have=inventoryQty(ex.itemId);
+      costLine=ex.validTreasure
+        ? `<span class="exchange-tag">🎁 ${esc(ex.itemName)} ×${ex.qty}</span><br><span class="${have>=ex.qty?'item-count-ok':'item-count-low'}">目前持有 ${have}</span>`
+        : `<span class="item-count-low">⚠️ 尚未設定兌換條件</span>`;
+      if(owned){
+        action=`<button class="btn ${using?'gray':'blue'}" ${using?'disabled':''} onclick="useBackgroundFromShop('${id}')">${using?'目前使用中':'套用到目前土地'}</button>`;
+      }else if(ex.validTreasure){
+        action=`<button class="btn purple" ${have<ex.qty?'disabled':''} onclick="redeemBackgroundUI('${id}')">兌換背景</button>`;
+      }else{
+        action=`<button class="btn gray" disabled>無法兌換</button>`;
+      }
+    }else{
+      costLine=ex.validCoin
+        ? `<span>🪙 ${ex.coinPrice}</span>`
+        : `<span class="item-count-low">⚠️ 尚未設定金幣價格</span>`;
+      if(owned){
+        action=`<button class="btn ${using?'gray':'blue'}" ${using?'disabled':''} onclick="useBackgroundFromShop('${id}')">${using?'目前使用中':'套用到目前土地'}</button>`;
+      }else if(ex.validCoin){
+        action=`<button class="btn blue" onclick="buyBackgroundUI('${id}')">購買背景</button>`;
+      }else{
+        action=`<button class="btn gray" disabled>不可購買</button>`;
+      }
+    }
+
+    return `<div class="itemcard"><b>${esc(bg['名稱'])}</b><div class="bg-thumb" style="background-image:url('${esc(bg['背景圖片'])}')"></div>${costLine}<br>${action}</div>`;
+  };
+
   panel.innerHTML=`<h3>🛒 土地／背景</h3>
   <div class="row" style="justify-content:flex-end"><button class="btn gray" onclick="refreshLiveLandCatalog(true)">↻ 更新背景資料</button></div>
-  <div class="home-section"><h4>➕ 購買土地</h4><p>每增加 1 格土地：🪙 2000</p><button class="btn" onclick="buyPlotUI()">購買 1 格土地</button></div>
-  <h4>🖼️ 背景商店</h4><div class="shop-grid">${rows.map(bg=>{
-    const id=String(bg['土地ID']),owned=ownedBg.has(id),using=String(activePlot?.backgroundId)===id;
-    const ex=backgroundAcquireInfo(bg);
-    const treasure=(ex.method.includes('寶物')||ex.method.includes('兌換')) && ex.itemId && ex.qty>0;
-    const have=treasure?inventoryQty(ex.itemId):0;
-    const costLine=treasure
-      ? `<span class="exchange-tag">🎁 ${esc(ex.itemName)} ×${ex.qty}</span><br><span class="${have>=ex.qty?'item-count-ok':'item-count-low'}">目前持有 ${have}</span>`
-      : `<span>🪙 ${Number(bg['價格']||0)}</span>`;
-    let action='';
-    if(owned) action=`<button class="btn ${using?'gray':'blue'}" ${using?'disabled':''} onclick="useBackgroundFromShop('${id}')">${using?'目前使用中':'套用到目前土地'}</button>`;
-    else if(treasure) action=`<button class="btn purple" ${have<ex.qty?'disabled':''} onclick="redeemBackgroundUI('${id}')">兌換背景</button>`;
-    else action=`<button class="btn blue" onclick="buyBackgroundUI('${id}')">購買背景</button>`;
-    return `<div class="itemcard"><b>${esc(bg['名稱'])}</b><div class="bg-thumb" style="background-image:url('${esc(bg['背景圖片'])}')"></div>${costLine}<br>${action}</div>`;
-  }).join('')}</div>`;
+
+  <div class="home-section">
+    <h4>➕ 購買土地</h4>
+    <p>每增加 1 格土地：🪙 2000</p>
+    <button class="btn" onclick="buyPlotUI()">購買 1 格土地</button>
+  </div>
+
+  <h4>🪙 金幣背景</h4>
+  <div class="shop-grid">${coinRows.map(cardHtml).join('')||'<div class="itemcard">目前沒有金幣背景。</div>'}</div>
+
+  <h4 style="margin-top:18px">🎁 寶物兌換背景</h4>
+  <div class="shop-grid">${treasureRows.map(cardHtml).join('')||'<div class="itemcard">目前沒有寶物兌換背景。</div>'}</div>`;
 }
 async function buyPlotUI(){
   if(!showPurchaseBusy('購買土地中'))return;
@@ -675,13 +718,26 @@ async function buyPlotUI(){
   }catch(e){alert(e.message||e);}finally{hidePurchaseBusy();}
 }
 async function buyBackgroundUI(id){
-  if(!showPurchaseBusy('購買背景中'))return;
+  const bg=getLandShopRows().find(x=>String(x['土地ID'])===String(id));
+  if(!bg)return;
+  const ex=backgroundAcquireInfo(bg);
+  if(ex.method!=='金幣'){
+    alert('這張背景不是金幣購買背景，請使用寶物兌換。');
+    return;
+  }
+  if(!ex.validCoin){
+    alert('這張背景尚未設定有效的金幣價格，暫時不能購買。');
+    return;
+  }
+  if(!confirm(`確定花費 ${ex.coinPrice} 金幣購買「${bg['名稱']}」嗎？`))return;
+  beginPurchaseBusy('購買中');
   try{
     const r=await gs('buyBackgroundFast',currentId,id);
-    state.student.coins=r.coins;coins.textContent=r.coins;
     state.backgrounds=Array.isArray(r.backgrounds)?r.backgrounds:state.backgrounds;
-    renderShop();
-  }catch(e){alert(e.message||e);}finally{hidePurchaseBusy();}
+    if(r.coins!==undefined){state.student.coins=r.coins;coins.textContent=r.coins;}
+    await renderShop();
+  }catch(e){alert(e.message||e);}
+  finally{endPurchaseBusy();}
 }
 async function useBackgroundFromShop(id){
   const plot=state.lands.find(l=>String(l['土地ID'])===String(state.activeLandId));
