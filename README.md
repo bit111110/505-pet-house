@@ -1,26 +1,27 @@
-# V5.4.1 登入修正版
+# 班級寵物小屋 V5.5
 
-上一版 V5.4 的 app.js 有一個 JavaScript 語法錯誤：
+本版新增：
+1. 老師後台密碼保護（密碼放 Apps Script Script Properties，不放公開 GitHub）。
+2. 學生生日改成只輸入月/日，例如 `09/08`。
+3. 土地與背景分離：土地固定 2000 元 / 格；背景另外購買；小屋可分配寵物到不同土地並更換已購背景。
+4. 信箱一鍵收取全部。
+5. 挑戰改成怪物對戰畫面（目前怪物用 👾 佔位）。
+6. 寵物技能：第 1/2/3 階各有可用技能；使用技能必須答題。答對 100% 傷害，答錯 30% 傷害。
+7. 是非題：挑戰畫面會顯示「是 / 否」兩個按鈕。
 
-`let currentId='' '',state=null`
+## 必做：Apps Script
+把 `apps-script/Code.gs` 覆蓋後：
+1. 執行一次 `setupOrUpgradeV55()`。
+2. Apps Script → 專案設定 → 指令碼屬性，新增：
+   - 屬性：`ADMIN_PASSWORD`
+   - 值：`10727101`
+3. 重新部署網頁應用程式「新版本」。
 
-多了一組空字串，導致整個 app.js 無法執行，因此登入按鈕沒有反應。
+> 不要把老師密碼直接寫進 GitHub。你的 repository 是公開時，任何寫在前端或公開 Code.gs 的密碼都能被看到。
 
-本版已修正為：
+## GitHub
+覆蓋：`index.html`、`style.css`、`app.js`、`data/pets.json`。
+更新後用 `?v=20261004-1705` 開啟一次。
 
-`let currentId='',state=null`
-
-並更新前端版本號為 `20261004-1618`，避免瀏覽器繼續載入壞掉的舊 app.js。
-
-## 更新方式
-只需要覆蓋 GitHub：
-- app.js
-- index.html
-
-data/pets.json、data/lands.json 不用重傳。
-Apps Script 不用重新部署。
-
-更新後請用：
-https://bit111110.github.io/505-pet-house/?v=20261004-1618
-
-首頁應顯示 V5.4.1。
+## 舊土地資料
+`setupOrUpgradeV55()` 會保留舊資料，並把原本擁有的土地轉成新的「土地格 + 背景」資料，不會直接清空舊工作表。

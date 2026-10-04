@@ -1,4 +1,4 @@
-const FRONTEND_BUILD='20261004-1618';
+const FRONTEND_BUILD='20261004-1705';
 const BUILTIN_LAND_BACKGROUNDS = {
   'LAND001': 'assets/maps/grassland.png',
   'LAND002': 'assets/maps/forest.png',
@@ -64,25 +64,22 @@ function applyStaticConfigsToState(s){
   }
 
   if(Array.isArray(s.lands)){
-    s.lands=s.lands.map(l=>{
-      const id=String(l['土地ID']||l.landId||'');
-      const cfg=LAND_CONFIGS[id]||null;
-      if(!cfg)return l;
+    s.lands=s.lands.map((l,i)=>{
+      const bgId=String(l['背景ID']||l.backgroundId||l['土地ID']||'LAND001');
+      const cfg=LAND_CONFIGS[bgId]||null;
       return {
         ...l,
-        config:{
+        plotIndex:Number(l['土地序號']||i+1),
+        backgroundId:bgId,
+        config:cfg?{
           ...(l.config||{}),
-          '土地ID':cfg.landId,
-          '名稱':cfg.name,
-          '價格':cfg.price,
-          '背景圖片':cfg.background,
-          '寬度':cfg.width,
-          '高度':cfg.height,
-          '是否開放':cfg.enabled
-        }
+          '土地ID':cfg.landId,'名稱':cfg.name,'價格':cfg.price,'背景圖片':cfg.background,
+          '寬度':cfg.width,'高度':cfg.height,'是否開放':cfg.enabled
+        }:(l.config||{})
       };
     });
   }
+  s.backgrounds=Array.isArray(s.backgrounds)?s.backgrounds.map(String):[];
   return s;
 }
 
@@ -226,8 +223,9 @@ async function refreshMailboxInBackground(forceRender=false){
     .finally(()=>mailRefreshPromise=null);
   return mailRefreshPromise;
 }
+function normalizeBirthdayInput(v){const d=String(v||'').replace(/[^0-9]/g,'');if(d.length===3)return '0'+d[0]+'/'+d.slice(1);if(d.length>=4)return d.slice(-4,-2)+'/'+d.slice(-2);const m=String(v||'').match(/(\d{1,2})\D+(\d{1,2})/);return m?String(Number(m[1])).padStart(2,'0')+'/'+String(Number(m[2])).padStart(2,'0'):String(v||'').trim();}
 async function login(){
-  const id=sid.value.trim(),bd=bday.value;
+  const id=sid.value.trim(),bd=normalizeBirthdayInput(bday.value);
   loginMsg.textContent='登入中…';
   try{
     // V5.3：登入只拿首頁必要資料，不再同步掃信箱/背包/商店。
@@ -276,7 +274,7 @@ function renderYard(){
   const y=document.getElementById('yard');
   y.querySelectorAll('.pet-pos,.bubble').forEach(x=>x.remove());
   const land=state.lands.find(x=>String(x['土地ID'])===String(state.activeLandId))||state.lands[0];
-  landTitle.textContent=land?.config?.['名稱']||'土地';
+  landTitle.textContent=`土地 ${land?.plotIndex||''}・${land?.config?.['名稱']||'背景'}`;
 
   // 最快模式：直接套用試算表背景，不先做圖片預載等待。
   // Google Drive 分享網址會即時轉成縮圖網址。
@@ -314,9 +312,21 @@ function wanderPets(){
 function petTalk(p,el){document.querySelectorAll('.bubble').forEach(x=>x.remove());const b=document.createElement('div');b.className='bubble';b.textContent=p.dialogs[Math.floor(Math.random()*p.dialogs.length)];b.style.left=(el.offsetLeft+el.offsetWidth/2)+'px';b.style.top=el.offsetTop+'px';yard.appendChild(b);setTimeout(()=>b.remove(),2400);}
 function switchTab(tab,btn){currentTab=tab;document.querySelectorAll('.tabbtn').forEach(x=>x.classList.remove('active'));btn?.classList.add('active');renderCurrentTab();}
 async function renderCurrentTab(){if(currentTab==='home')renderHome();if(currentTab==='upgrade')await renderUpgrade();if(currentTab==='bag')await renderBag();if(currentTab==='challenge')renderChallengeHome();if(currentTab==='mail')await renderMail();if(currentTab==='shop')await renderShop();}
-function renderHome(){const pets=state.pets.filter(p=>String(p.landId)===String(state.activeLandId));panel.innerHTML=`<h3>🐾 目前土地上的寵物</h3>${pets.map(p=>petCardHtml(p)).join('')||'<div class="petcard">目前這塊土地沒有寵物。</div>'}<button class="btn blue" style="width:100%;margin:8px 0 12px" onclick="switchTab('challenge',document.querySelector('[data-tab=challenge]'))">⚔️ 前往五科挑戰</button><h3>🗺️ 切換土地</h3><div class="row">${state.lands.map(l=>`<button class="btn ${String(l['土地ID'])===String(state.activeLandId)?'gray':'secondary'}" onclick="changeLand('${l['土地ID']}')">${esc(l.config?.['名稱']||l['土地ID'])}</button>`).join('')}</div><p class="small">地圖上半部為天空區、下半部為地面區。地面型寵物只會在地面活動；天空型可自由活動。</p>`;}
+function renderHome(){
+  const petsHere=state.pets.filter(p=>String(p.landId)===String(state.activeLandId));
+  const ownedBgs=(state.backgrounds||[]).map(id=>LAND_CONFIGS[id]).filter(Boolean);
+  const activePlot=state.lands.find(l=>String(l['土地ID'])===String(state.activeLandId))||state.lands[0];
+  panel.innerHTML=`<h3>🏠 小屋管理</h3>
+    <div class="home-section"><h4>土地切換</h4><div class="row">${state.lands.map((l,i)=>`<button class="btn ${String(l['土地ID'])===String(state.activeLandId)?'gray':'secondary'}" onclick="changeLand('${l['土地ID']}')">土地 ${l.plotIndex||i+1}</button>`).join('')}</div><p class="small">目前背景：${esc(activePlot?.config?.['名稱']||'')}</p></div>
+    <div class="home-section"><h4>🖼️ 這塊土地的背景</h4><select id="homeBg" class="full">${ownedBgs.map(bg=>`<option value="${bg.landId}" ${String(bg.landId)===String(activePlot?.backgroundId)?'selected':''}>${esc(bg.name)}</option>`).join('')}</select><button class="btn blue" style="margin-top:7px" onclick="applyHomeBackground()">套用背景</button></div>
+    <div class="home-section"><h4>🐾 分配寵物到土地</h4>${state.pets.map(p=>`<div class="petcard"><b>${esc(p.nickname||p.name)}</b><div class="row" style="margin-top:6px"><select id="plot-${p.petId}">${state.lands.map((l,i)=>`<option value="${l['土地ID']}" ${String(p.landId)===String(l['土地ID'])?'selected':''}>土地 ${l.plotIndex||i+1}</option>`).join('')}</select><button class="btn" onclick="movePetUI('${p.petId}')">分配</button></div></div>`).join('')}</div>
+    <h4>目前土地上的寵物</h4>${petsHere.map(p=>petCardHtml(p)).join('')||'<div class="petcard">目前這塊土地沒有寵物。</div>'}
+    <button class="btn blue" style="width:100%;margin:8px 0" onclick="switchTab('challenge',document.querySelector('[data-tab=challenge]'))">⚔️ 前往對戰挑戰</button>`;
+}
 function petCardHtml(p){const pct=Math.min(100,p.exp/p.expNeed*100);return `<div class="petcard"><b>${esc(p.nickname||p.name)}</b> <span class="small">${esc(p.movementType)}</span><br>Lv.${p.level}・第${p.stage}階<div class="xp"><div style="width:${pct}%"></div></div><small>EXP ${p.exp}/${p.expNeed}</small></div>`;}
 async function changeLand(id){try{const r=await gs('setActiveLandFast',currentId,id);state.activeLandId=r.activeLandId;state.furniture=Array.isArray(r.furniture)?r.furniture:[];renderYard();renderHome();}catch(e){alert(e.message||e);}}
+async function movePetUI(petId){const sel=document.getElementById('plot-'+petId);if(!sel)return;try{await gs('movePetToLand',currentId,petId,sel.value);const p=state.pets.find(x=>x.petId===petId);if(p)p.landId=sel.value;renderYard();renderHome();}catch(e){alert(e.message||e);}}
+async function applyHomeBackground(){const bg=document.getElementById('homeBg')?.value;if(!bg)return;try{const r=await gs('setPlotBackgroundFast',currentId,state.activeLandId,bg);const plot=state.lands.find(l=>String(l['土地ID'])===String(state.activeLandId));if(plot){plot.backgroundId=bg;plot['背景ID']=bg;plot.config=LAND_CONFIGS[bg]||plot.config;}renderYard();renderHome();}catch(e){alert(e.message||e);}}
 async function renderUpgrade(){if(!Array.isArray(inventory)||!inventory.length)inventory=await gs('getInventory',currentId);const expItems=inventory.filter(x=>x.config?.['類型']==='經驗型');panel.innerHTML=`<h3>⬆️ 寵物升級</h3><label>選擇寵物</label><select id="upPet" class="full">${state.pets.map(p=>`<option value="${p.petId}">${esc(p.name)} Lv.${p.level}</option>`).join('')}</select><div id="upPetInfo" style="margin-top:8px"></div><h4>使用經驗道具</h4>${expItems.length?expItems.map(x=>`<div class="itemcard"><b>${esc(x.config['名稱'])}</b> ×${x.quantity}<br><span class="small">+${x.config['效果值']} EXP/個</span><div class="row" style="margin-top:6px"><input id="qty-${x.itemId}" type="number" min="1" max="${x.quantity}" value="1" style="width:80px"><button class="btn" onclick="useExp('${x.itemId}')">使用</button></div></div>`).join(''):'<div class="itemcard">目前沒有經驗型道具。</div>'}`;upPet.onchange=renderUpPetInfo;renderUpPetInfo();}
 function renderUpPetInfo(){const p=state.pets.find(x=>x.petId===upPet.value);if(p)upPetInfo.innerHTML=petCardHtml(p);}
 async function useExp(itemId){
@@ -332,25 +342,33 @@ async function useExp(itemId){
   }catch(e){alert(e.message||e);}
 }
 async function renderBag(){if(!Array.isArray(inventory)||!inventory.length)inventory=await gs('getInventory',currentId);panel.innerHTML=`<h3>🎒 我的道具</h3>${inventory.map(x=>`<div class="itemcard"><b>${esc(x.config?.['名稱']||x.itemId)}</b> ×${x.quantity}<br><span class="small">${esc(x.config?.['類型']||'')}｜${esc(x.config?.['說明']||'')}</span></div>`).join('')||'<div class="itemcard">背包目前是空的。</div>'}`;}
-function renderChallengeHome(){const subjects=['國語','數學','英文','自然','社會'];panel.innerHTML=`<h3>⚔️ 五科挑戰</h3><p class="small">每科答錯 3 次後，會鎖定到下一個早上 7:00。答對越多，每題 EXP 會逐階增加。</p>${subjects.map(s=>{const st=state.challengeStatus?.[s]||{correct:0,wrong:0,locked:false};return `<div class="subjectcard"><b>${s}</b>　答對 ${st.correct}　<span class="lives">${'❤️'.repeat(Math.max(0,3-st.wrong))}${'🖤'.repeat(st.wrong)}</span><br><button class="btn ${st.locked?'gray':'blue'}" ${st.locked?'disabled':''} onclick="chooseChallenge('${s}')">${st.locked?'今日已結束':'開始挑戰'}</button></div>`}).join('')}`;}
-function chooseChallenge(subject){challenge.subject=subject;panel.innerHTML=`<h3>⚔️ ${subject}挑戰</h3><label>派遣寵物</label><select id="chPet" class="full">${state.pets.map(p=>`<option value="${p.petId}">${esc(p.name)} Lv.${p.level}</option>`).join('')}</select><div class="nav"><button class="btn blue" onclick="startChallengeUI()">出發</button><button class="btn gray" onclick="renderChallengeHome()">返回</button></div>`;}
+function renderChallengeHome(){const subjects=['國語','數學','英文','自然','社會'];panel.innerHTML=`<h3>⚔️ 寵物對戰挑戰</h3><p class="small">選擇科目與寵物。使用技能時會出題；答對造成完整傷害，答錯仍可造成 30% 傷害。每科累積答錯 3 次後鎖定到下一個早上 7:00。</p>${subjects.map(s=>{const st=state.challengeStatus?.[s]||{correct:0,wrong:0,locked:false};return `<div class="subjectcard"><b>${s}</b>　答對 ${st.correct}　<span class="lives">${'❤️'.repeat(Math.max(0,3-st.wrong))}${'🖤'.repeat(st.wrong)}</span><br><button class="btn ${st.locked?'gray':'blue'}" ${st.locked?'disabled':''} onclick="chooseChallenge('${s}')">${st.locked?'今日已結束':'進入對戰'}</button></div>`}).join('')}`;}
+function chooseChallenge(subject){challenge.subject=subject;panel.innerHTML=`<h3>⚔️ ${subject}對戰</h3><label>選擇出戰寵物</label><select id="chPet" class="full">${state.pets.map(p=>`<option value="${p.petId}">${esc(p.name)} Lv.${p.level}・第${p.stage}階</option>`).join('')}</select><div class="nav"><button class="btn blue" onclick="startChallengeUI()">開始戰鬥</button><button class="btn gray" onclick="renderChallengeHome()">返回</button></div>`;}
+function getPetSkills(pet){const cfg=PET_CONFIGS[String(pet.petId)]||{};const arr=Array.isArray(cfg.skills)?cfg.skills:[];return arr.filter(s=>Number(s.minStage||1)<=Number(pet.stage||1));}
 async function startChallengeUI(){
   challenge.petId=chPet.value;
   try{
     const r=await gs('startChallengeBatch',currentId,challenge.subject,challenge.petId);
     if(!r.ok&&r.locked){showLocked(r);return;}
     challenge.questions=r.questions||[];challenge.qIndex=0;challenge.status={...r.status};challenge.pending=[];challenge.seen=[];
-    challenge.question=challenge.questions[0]||null;renderQuestion(challenge.status);
+    challenge.monsterNo=1;challenge.monsterMaxHp=100;challenge.monsterHp=100;challenge.selectedSkill=null;challenge.question=null;challenge.lastMsg='';
+    renderBattle();
   }catch(e){alert(e.message||e);}
 }
-function renderQuestion(status,msg=''){
-  const q=challenge.question;
-  if(!q){panel.innerHTML='<div class="qbox">正在載入下一批題目...</div>';loadMoreChallengeQuestions();return;}
-  let answer='';
-  if(q.type==='填充題')answer=`<input id="fillAns" class="full" type="text" placeholder="輸入答案"><button class="btn blue" style="margin-top:8px" onclick="sendAnswer(document.getElementById('fillAns').value)">送出</button>`;
-  else answer=q.options.map((o,i)=>`<button class="btn option blue" onclick="sendAnswer('${String.fromCharCode(65+i)}')">${String.fromCharCode(65+i)}. ${esc(o)}</button>`).join('');
-  panel.innerHTML=`<div class="qbox"><div class="row"><b>${esc(challenge.subject)}</b><span>答對 ${status.correct}</span><span class="lives">${'❤️'.repeat(Math.max(0,3-status.wrong))}${'🖤'.repeat(status.wrong)}</span></div><div class="qtext">${esc(q.text)}</div>${answer}${msg?`<div style="margin-top:10px">${msg}</div>`:''}<div style="margin-top:10px"><button class="btn gray" onclick="finishChallengeUI()">結束挑戰</button></div></div>`;
+function renderBattle(){
+  const pet=state.pets.find(p=>p.petId===challenge.petId);if(!pet)return;
+  const skills=getPetSkills(pet);
+  const mhp=Math.max(0,Number(challenge.monsterHp||0)),mmax=Number(challenge.monsterMaxHp||100);
+  panel.innerHTML=`<div class="battle"><div class="row"><b>${esc(challenge.subject)}對戰</b><span>答對 ${challenge.status.correct||0}</span><span class="lives">${'❤️'.repeat(Math.max(0,3-(challenge.status.wrong||0)))}${'🖤'.repeat(challenge.status.wrong||0)}</span></div>
+  <div class="battle-stage"><div class="fighter"><b>${esc(pet.name)}</b><div class="fighter-img">${getPetImage(pet.petId,pet.stage)?`<img src="${getPetImage(pet.petId,pet.stage)}">`:'🐾'}</div></div><div class="vs">VS</div><div class="fighter"><b>怪物 ${challenge.monsterNo}</b><div class="monster-placeholder">👾</div><div class="hpbar"><div style="width:${Math.max(0,mhp/mmax*100)}%"></div></div><small>HP ${Math.ceil(mhp)} / ${mmax}</small></div></div>
+  ${challenge.lastMsg?`<div style="text-align:center;margin:8px 0">${challenge.lastMsg}</div>`:''}
+  <h4>選擇技能</h4><div class="skill-grid">${skills.map(s=>`<button class="btn purple skill-btn" onclick="useBattleSkill('${s.id}')"><b>${esc(s.icon||'✨')} ${esc(s.name)}</b><br><span class="small" style="color:white">威力 ${s.damage}</span></button>`).join('')}</div>
+  <div class="nav"><button class="btn gray" onclick="finishChallengeUI()">結束對戰</button></div></div>`;
 }
+function useBattleSkill(skillId){const pet=state.pets.find(p=>p.petId===challenge.petId);const skill=getPetSkills(pet).find(s=>String(s.id)===String(skillId));if(!skill)return;challenge.selectedSkill=skill;if(!challenge.questions?.length || challenge.qIndex>=challenge.questions.length){loadMoreBattleQuestions();return;}challenge.question=challenge.questions[challenge.qIndex];renderBattleQuestion();}
+function renderBattleQuestion(){const q=challenge.question,skill=challenge.selectedSkill;if(!q||!skill){renderBattle();return;}let answer='';if(String(q.type).includes('填充'))answer=`<input id="fillAns" class="full" type="text" placeholder="輸入答案"><button class="btn blue" style="margin-top:8px" onclick="sendBattleAnswer(document.getElementById('fillAns').value)">送出</button>`;else if(String(q.type).includes('是非'))answer=`<div class="grid2"><button class="btn blue option" onclick="sendBattleAnswer('A')">⭕ 是</button><button class="btn red option" onclick="sendBattleAnswer('B')">❌ 否</button></div>`;else answer=q.options.map((o,i)=>`<button class="btn option blue" onclick="sendBattleAnswer('${String.fromCharCode(65+i)}')">${String.fromCharCode(65+i)}. ${esc(o)}</button>`).join('');panel.innerHTML=`<div class="question-overlay"><div class="row"><b>${esc(skill.icon||'✨')} ${esc(skill.name)}</b><span>威力 ${skill.damage}</span></div><div class="qtext">${esc(q.text)}</div>${answer}<button class="btn gray" style="margin-top:8px" onclick="renderBattle()">取消技能</button></div>`;}
+async function sendBattleAnswer(ans){const q=challenge.question,skill=challenge.selectedSkill;if(!q||!skill)return;const good=normAns(ans)===normAns(q.answer);let gained=0;if(good){challenge.status.correct=Number(challenge.status.correct||0)+1;gained=challengeLocalExp(challenge.status.correct);challenge.status.exp=Number(challenge.status.exp||0)+gained;}else challenge.status.wrong=Number(challenge.status.wrong||0)+1;const damage=Math.max(1,Math.round(Number(skill.damage||0)*(good?1:.3)));challenge.monsterHp=Math.max(0,Number(challenge.monsterHp||0)-damage);challenge.pending.push({questionId:q.id,answer:ans});challenge.seen.push(q.id);challenge.qIndex++;challenge.lastMsg=good?`<span class="success">✅ 正確！${esc(skill.name)}造成 <span class="damage-pop">${damage}</span> 傷害，+${gained} EXP</span>`:`<span class="wrong">❌ 答錯，只造成 30% 傷害：<span class="damage-pop">${damage}</span><br>正確答案：${esc(q.answer)} ${esc(q.explanation||'')}</span>`;challenge.question=null;challenge.selectedSkill=null;if(challenge.status.wrong>=3){await flushChallengeAnswers(true);panel.innerHTML=`<div class="qbox"><h3>今日對戰結束</h3>${challenge.lastMsg}<p>答對：${challenge.status.correct} 題</p><p>明早 7:00 後重置。</p><button class="btn gray" onclick="refreshState().then(()=>renderChallengeHome())">返回</button></div>`;return;}if(challenge.monsterHp<=0){challenge.monsterNo++;challenge.monsterMaxHp=100+(challenge.monsterNo-1)*25;challenge.monsterHp=challenge.monsterMaxHp;challenge.lastMsg+=`<br><span class="success">🏆 擊敗怪物！下一隻怪物出現。</span>`;}if(challenge.pending.length>=5)flushChallengeAnswers(false);renderBattle();}
+async function loadMoreBattleQuestions(){try{await flushChallengeAnswers(true);const qs=await gs('getChallengeQuestionBatch',challenge.subject,challenge.seen.slice(-50),30);challenge.questions=qs||[];challenge.qIndex=0;if(!challenge.questions.length)throw new Error('沒有可用題目');challenge.question=challenge.questions[0];renderBattleQuestion();}catch(e){alert(e.message||e);}}
 function challengeLocalExp(n){if(n>=50)return 6;if(n>=40)return 5;if(n>=30)return 4;if(n>=20)return 3;if(n>=10)return 2;return 1;}
 function normAns(v){return String(v??'').trim().toUpperCase().replace(/\s+/g,'');}
 async function sendAnswer(ans){
@@ -398,8 +416,10 @@ async function renderMail(){
   await refreshMailboxInBackground(true);
 }
 function renderMailFromCache(){
-  panel.innerHTML=`<h3>📬 信箱</h3>${mailbox.map(m=>`<div class="mailcard"><b>${esc(m['標題'])}</b><br><span class="small">寄件者：${esc(m['寄件者'])}</span><p>${esc(m['內容'])}</p>${m['附件ID']?`🎁 ${esc(m['附件名稱'])} ×${m['附件數量']}<br>`:''}<button class="btn ${m['是否領取']===true||String(m['是否領取']).toUpperCase()==='TRUE'?'gray':''}" ${(m['是否領取']===true||String(m['是否領取']).toUpperCase()==='TRUE')?'disabled':''} onclick="claimMailUI('${m['信件ID']}')">${(m['是否領取']===true||String(m['是否領取']).toUpperCase()==='TRUE')?'已領取':'領取附件'}</button></div>`).join('')||'<div class="mailcard">目前沒有信件。</div>'}`;
+  const unclaimed=mailbox.filter(m=>!(m['是否領取']===true||String(m['是否領取']).toUpperCase()==='TRUE')).length;
+  panel.innerHTML=`<h3>📬 信箱</h3><div class="mail-actions"><button class="btn blue" ${unclaimed?'':'disabled'} onclick="claimAllMailUI()">📦 一鍵收取全部（${unclaimed}）</button><button class="btn gray" onclick="refreshMailboxInBackground(true)">更新信箱</button></div>${mailbox.map(m=>`<div class="mailcard"><b>${esc(m['標題'])}</b><br><span class="small">寄件者：${esc(m['寄件者'])}</span><p>${esc(m['內容'])}</p>${m['附件ID']?`🎁 ${esc(m['附件名稱'])} ×${m['附件數量']}<br>`:''}<button class="btn ${m['是否領取']===true||String(m['是否領取']).toUpperCase()==='TRUE'?'gray':''}" ${(m['是否領取']===true||String(m['是否領取']).toUpperCase()==='TRUE')?'disabled':''} onclick="claimMailUI('${m['信件ID']}')">${(m['是否領取']===true||String(m['是否領取']).toUpperCase()==='TRUE')?'已領取':'領取附件'}</button></div>`).join('')||'<div class="mailcard">目前沒有信件。</div>'}`;
 }
+async function claimAllMailUI(){const targets=mailbox.filter(m=>!(m['是否領取']===true||String(m['是否領取']).toUpperCase()==='TRUE'));if(!targets.length)return;targets.forEach(m=>m['是否領取']=true);if(state)state.unreadMail=0;mailBadge.classList.add('hidden');renderMailFromCache();saveLocal('mailbox',mailbox);try{const r=await gs('claimAllMailFast',currentId);if(Array.isArray(r?.mailbox))mailbox=r.mailbox;if(Array.isArray(r?.inventory)){inventory=r.inventory;saveLocal('inventory',inventory);}saveLocal('mailbox',mailbox);renderMailFromCache();}catch(e){alert(e.message||e);await refreshMailboxInBackground(true);}}
 async function claimMailUI(id){
   const m=mailbox.find(x=>String(x['信件ID'])===String(id));
   if(!m)return;
@@ -432,21 +452,18 @@ async function claimMailUI(id){
     alert(e.message||e);
   }
 }
-async function renderShop(){if(!shop){if(STATIC_LANDS.length)shop={lands:getLandShopRows(),furniture:[]};else shop=await gs('getShop');}const rows=STATIC_LANDS.length?getLandShopRows():shop.lands;const owned=new Set(state.lands.map(x=>String(x['土地ID'])));panel.innerHTML=`<h3>🗺️ 土地商店</h3><p class="small">買新土地後，可以讓不同寵物住在不同地圖。</p>${rows.map(l=>`<div class="itemcard"><b>${esc(l['名稱'])}</b>　🪙${l['價格']}<br><button class="btn ${owned.has(String(l['土地ID']))?'gray':'secondary'}" ${owned.has(String(l['土地ID']))?'disabled':''} onclick="buyLandUI('${l['土地ID']}')">${owned.has(String(l['土地ID']))?'已擁有':'購買'}</button></div>`).join('')}`;}
-async function buyLandUI(id){try{const r=await gs('buyLandFast',currentId,id);if(r.land&&!state.lands.some(x=>String(x['土地ID'])===String(id))){
-      const tmp={...r.land};
-      const cfg=LAND_CONFIGS[String(id)];
-      if(cfg)tmp.config={...(tmp.config||{}),'土地ID':cfg.landId,'名稱':cfg.name,'價格':cfg.price,'背景圖片':cfg.background,'寬度':cfg.width,'高度':cfg.height,'是否開放':cfg.enabled};
-      state.lands.push(tmp);
-    }state.student.coins=Number(r.coins||0);coins.textContent=state.student.coins;renderYard();await renderShop();}catch(e){alert(e.message||e);}}
+async function renderShop(){const ownedBg=new Set((state.backgrounds||[]).map(String));panel.innerHTML=`<h3>🛒 土地與背景</h3><div class="home-section"><h4>➕ 購買土地</h4><p>每購買一次增加 1 格土地。</p><p><b>價格：🪙 2000</b></p><button class="btn secondary" onclick="buyPlotUI()">購買 +1 土地</button></div><h4>🖼️ 背景商店</h4><div class="shop-grid">${STATIC_LANDS.filter(l=>l.enabled!==false).map(bg=>`<div class="itemcard"><b>${esc(bg.name)}</b><div class="bg-thumb" style="background-image:url('${esc(bg.background)}')"></div><span>🪙 ${Number(bg.price||0)}</span><br><button class="btn ${ownedBg.has(String(bg.landId))?'gray':'blue'}" ${ownedBg.has(String(bg.landId))?'disabled':''} onclick="buyBackgroundUI('${bg.landId}')">${ownedBg.has(String(bg.landId))?'已擁有':'購買背景'}</button></div>`).join('')}</div>`;}
+async function buyPlotUI(){try{const r=await gs('buyPlotFast',currentId);state.student.coins=r.coins;coins.textContent=r.coins;if(r.plot)state.lands.push(applyStaticConfigsToState({lands:[r.plot]}).lands[0]);renderYard();renderShop();}catch(e){alert(e.message||e);}}
+async function buyBackgroundUI(id){try{const r=await gs('buyBackgroundFast',currentId,id);state.student.coins=r.coins;coins.textContent=r.coins;state.backgrounds=Array.isArray(r.backgrounds)?r.backgrounds:state.backgrounds;renderShop();}catch(e){alert(e.message||e);}}
 function logout(){
-  currentId='';state=null;inventory=[];mailbox=[];shop=null;mailboxLoaded=false;mailboxAt=0;
+  currentId='';state=null;inventory=[];mailbox=[];shop=null;mailboxLoaded=false;mailboxAt=0;adminPassword='';sessionStorage.removeItem('petHouseAdminPassword');
   if(wanderTimer)clearInterval(wanderTimer);
   if(backgroundMailTimer)clearInterval(backgroundMailTimer);
   studentView.classList.add('hidden');adminView.classList.add('hidden');loginView.classList.remove('hidden');
 }
-async function openAdmin(){loginView.classList.add('hidden');adminView.classList.remove('hidden');await loadAdmin();}
-async function loadAdmin(){adminData=await gs('getAdminData');const itemOpts=adminData.items.map(x=>`<option value="${x['道具ID']}">${esc(x['名稱'])}</option>`).join('');const petOpts=adminData.pets.map(x=>`<option value="${x.petId}">${esc(x.name)}</option>`).join('');adminArea.innerHTML=`<table class="admin-table"><thead><tr><th>座號</th><th>學生</th><th>金幣</th><th>發獎勵</th></tr></thead><tbody>${adminData.students.map(s=>`<tr><td>${s.seat||''}</td><td>${esc(s.name)}<br><span class="small">${esc(s.id)}</span></td><td>${s.coins}</td><td><div class="row"><button class="btn" onclick="adminCoin('${s.id}',10)">+10🪙</button><select id="it-${s.id}">${itemOpts}</select><input id="iq-${s.id}" type="number" min="1" value="1" style="width:65px"><button class="btn purple" onclick="adminItem('${s.id}')">發道具</button><select id="pt-${s.id}">${petOpts}</select><button class="btn secondary" onclick="adminPet('${s.id}')">發寵物</button></div></td></tr>`).join('')}</tbody></table>`;}
-async function adminCoin(id,n){await gs('addCoins',id,n,'課堂獎勵');await loadAdmin();}
-async function adminItem(id){const item=document.getElementById('it-'+id).value,qty=Number(document.getElementById('iq-'+id).value||1);try{await gs('grantItem',id,item,qty,'課堂獎勵');alert('已發放');}catch(e){alert(e.message||e);}}
-async function adminPet(id){const p=document.getElementById('pt-'+id).value;try{await gs('assignPetToStudent',id,p);alert('已分配寵物');}catch(e){alert(e.message||e);}}
+let adminPassword=sessionStorage.getItem('petHouseAdminPassword')||'';
+async function openAdmin(){const pw=prompt('請輸入老師後台密碼：');if(!pw)return;try{await gs('adminLogin',pw);adminPassword=pw;sessionStorage.setItem('petHouseAdminPassword',pw);loginView.classList.add('hidden');adminView.classList.remove('hidden');await loadAdmin();}catch(e){alert('密碼錯誤或後台驗證失敗：'+(e.message||e));}}
+async function loadAdmin(){if(!adminPassword){logout();return;}adminData=await gs('getAdminDataSecure',adminPassword);const itemOpts=adminData.items.map(x=>`<option value="${x['道具ID']}">${esc(x['名稱'])}</option>`).join('');const petOpts=adminData.pets.map(x=>`<option value="${x.petId}">${esc(x.name)}</option>`).join('');adminArea.innerHTML=`<table class="admin-table"><thead><tr><th>座號</th><th>學生</th><th>金幣</th><th>發獎勵</th></tr></thead><tbody>${adminData.students.map(s=>`<tr><td>${s.seat||''}</td><td>${esc(s.name)}<br><span class="small">${esc(s.id)}</span></td><td>${s.coins}</td><td><div class="row"><button class="btn" onclick="adminCoin('${s.id}',10)">+10🪙</button><select id="it-${s.id}">${itemOpts}</select><input id="iq-${s.id}" type="number" min="1" value="1" style="width:65px"><button class="btn purple" onclick="adminItem('${s.id}')">發道具</button><select id="pt-${s.id}">${petOpts}</select><button class="btn secondary" onclick="adminPet('${s.id}')">發寵物</button></div></td></tr>`).join('')}</tbody></table>`;}
+async function adminCoin(id,n){await gs('adminAddCoins',adminPassword,id,n,'課堂獎勵');await loadAdmin();}
+async function adminItem(id){const item=document.getElementById('it-'+id).value,qty=Number(document.getElementById('iq-'+id).value||1);try{await gs('adminGrantItem',adminPassword,id,item,qty,'課堂獎勵');alert('已發放');}catch(e){alert(e.message||e);}}
+async function adminPet(id){const p=document.getElementById('pt-'+id).value;try{await gs('adminAssignPet',adminPassword,id,p);alert('已分配寵物');}catch(e){alert(e.message||e);}}

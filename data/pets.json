@@ -14,7 +14,33 @@
       "我想出去走走～",
       "謝謝你一直陪我長大！"
     ],
-    "moveType": "天空型"
+    "moveType": "天空型",
+    "skills": [
+      {
+        "id": "SKILL1",
+        "name": "快速攻擊",
+        "damage": 20,
+        "icon": "⚡",
+        "minStage": 1,
+        "description": "穩定的基礎攻擊。"
+      },
+      {
+        "id": "SKILL2",
+        "name": "能量爆發",
+        "damage": 35,
+        "icon": "✨",
+        "minStage": 2,
+        "description": "第二階後可使用的強力技能。"
+      },
+      {
+        "id": "SKILL3",
+        "name": "終極技能",
+        "damage": 50,
+        "icon": "🌟",
+        "minStage": 3,
+        "description": "第三階解鎖的終極技能。"
+      }
+    ]
   },
   {
     "petId": "PET002",
@@ -31,7 +57,33 @@
       "要不要一起冒險？",
       "我已經變得很強了！"
     ],
-    "moveType": "地面型"
+    "moveType": "地面型",
+    "skills": [
+      {
+        "id": "SKILL1",
+        "name": "快速攻擊",
+        "damage": 20,
+        "icon": "⚡",
+        "minStage": 1,
+        "description": "穩定的基礎攻擊。"
+      },
+      {
+        "id": "SKILL2",
+        "name": "能量爆發",
+        "damage": 35,
+        "icon": "✨",
+        "minStage": 2,
+        "description": "第二階後可使用的強力技能。"
+      },
+      {
+        "id": "SKILL3",
+        "name": "終極技能",
+        "damage": 50,
+        "icon": "🌟",
+        "minStage": 3,
+        "description": "第三階解鎖的終極技能。"
+      }
+    ]
   },
   {
     "petId": "PET003",
@@ -48,7 +100,33 @@
       "你今天過得好嗎？",
       "我們已經一起很久了呢！"
     ],
-    "moveType": "地面型"
+    "moveType": "地面型",
+    "skills": [
+      {
+        "id": "SKILL1",
+        "name": "快速攻擊",
+        "damage": 20,
+        "icon": "⚡",
+        "minStage": 1,
+        "description": "穩定的基礎攻擊。"
+      },
+      {
+        "id": "SKILL2",
+        "name": "能量爆發",
+        "damage": 35,
+        "icon": "✨",
+        "minStage": 2,
+        "description": "第二階後可使用的強力技能。"
+      },
+      {
+        "id": "SKILL3",
+        "name": "終極技能",
+        "damage": 50,
+        "icon": "🌟",
+        "minStage": 3,
+        "description": "第三階解鎖的終極技能。"
+      }
+    ]
   },
   {
     "petId": "PET004",
@@ -61,7 +139,33 @@
     "price": 0,
     "enabled": true,
     "dialogues": [],
-    "moveType": "地面型"
+    "moveType": "地面型",
+    "skills": [
+      {
+        "id": "SKILL1",
+        "name": "快速攻擊",
+        "damage": 20,
+        "icon": "⚡",
+        "minStage": 1,
+        "description": "穩定的基礎攻擊。"
+      },
+      {
+        "id": "SKILL2",
+        "name": "能量爆發",
+        "damage": 35,
+        "icon": "✨",
+        "minStage": 2,
+        "description": "第二階後可使用的強力技能。"
+      },
+      {
+        "id": "SKILL3",
+        "name": "終極技能",
+        "damage": 50,
+        "icon": "🌟",
+        "minStage": 3,
+        "description": "第三階解鎖的終極技能。"
+      }
+    ]
   },
   {
     "petId": "PET005",
@@ -74,7 +178,33 @@
     "price": 0,
     "enabled": true,
     "dialogues": [],
-    "moveType": "地面型"
+    "moveType": "地面型",
+    "skills": [
+      {
+        "id": "SKILL1",
+        "name": "快速攻擊",
+        "damage": 20,
+        "icon": "⚡",
+        "minStage": 1,
+        "description": "穩定的基礎攻擊。"
+      },
+      {
+        "id": "SKILL2",
+        "name": "能量爆發",
+        "damage": 35,
+        "icon": "✨",
+        "minStage": 2,
+        "description": "第二階後可使用的強力技能。"
+      },
+      {
+        "id": "SKILL3",
+        "name": "終極技能",
+        "damage": 50,
+        "icon": "🌟",
+        "minStage": 3,
+        "description": "第三階解鎖的終極技能。"
+      }
+    ]
   },
   {
     "petId": "PET006",
@@ -87,7 +217,33 @@
     "price": 0,
     "enabled": true,
     "dialogues": [],
-    "moveType": "地面型"
+    "moveType": "地面型",
+    "skills": [
+      {
+        "id": "SKILL1",
+        "name": "快速攻擊",
+        "damage": 20,
+        "icon": "⚡",
+        "minStage": 1,
+        "description": "穩定的基礎攻擊。"
+      },
+      {
+        "id": "SKILL2",
+        "name": "能量爆發",
+        "damage": 35,
+        "icon": "✨",
+        "minStage": 2,
+        "description": "第二階後可使用的強力技能。"
+      },
+      {
+        "id": "SKILL3",
+        "name": "終極技能",
+        "damage": 50,
+        "icon": "🌟",
+        "minStage": 3,
+        "description": "第三階解鎖的終極技能。"
+      }
+    ]
   },
   {
     "petId": "PET007",
@@ -100,7 +256,33 @@
     "price": 0,
     "enabled": true,
     "dialogues": [],
-    "moveType": "地面型"
+    "moveType": "地面型",
+    "skills": [
+      {
+        "id": "SKILL1",
+        "name": "快速攻擊",
+        "damage": 20,
+        "icon": "⚡",
+        "minStage": 1,
+        "description": "穩定的基礎攻擊。"
+      },
+      {
+        "id": "SKILL2",
+        "name": "能量爆發",
+        "damage": 35,
+        "icon": "✨",
+        "minStage": 2,
+        "description": "第二階後可使用的強力技能。"
+      },
+      {
+        "id": "SKILL3",
+        "name": "終極技能",
+        "damage": 50,
+        "icon": "🌟",
+        "minStage": 3,
+        "description": "第三階解鎖的終極技能。"
+      }
+    ]
   },
   {
     "petId": "PET008",
@@ -113,7 +295,33 @@
     "price": 0,
     "enabled": true,
     "dialogues": [],
-    "moveType": "地面型"
+    "moveType": "地面型",
+    "skills": [
+      {
+        "id": "SKILL1",
+        "name": "快速攻擊",
+        "damage": 20,
+        "icon": "⚡",
+        "minStage": 1,
+        "description": "穩定的基礎攻擊。"
+      },
+      {
+        "id": "SKILL2",
+        "name": "能量爆發",
+        "damage": 35,
+        "icon": "✨",
+        "minStage": 2,
+        "description": "第二階後可使用的強力技能。"
+      },
+      {
+        "id": "SKILL3",
+        "name": "終極技能",
+        "damage": 50,
+        "icon": "🌟",
+        "minStage": 3,
+        "description": "第三階解鎖的終極技能。"
+      }
+    ]
   },
   {
     "petId": "PET009",
@@ -126,7 +334,33 @@
     "price": 0,
     "enabled": true,
     "dialogues": [],
-    "moveType": "地面型"
+    "moveType": "地面型",
+    "skills": [
+      {
+        "id": "SKILL1",
+        "name": "快速攻擊",
+        "damage": 20,
+        "icon": "⚡",
+        "minStage": 1,
+        "description": "穩定的基礎攻擊。"
+      },
+      {
+        "id": "SKILL2",
+        "name": "能量爆發",
+        "damage": 35,
+        "icon": "✨",
+        "minStage": 2,
+        "description": "第二階後可使用的強力技能。"
+      },
+      {
+        "id": "SKILL3",
+        "name": "終極技能",
+        "damage": 50,
+        "icon": "🌟",
+        "minStage": 3,
+        "description": "第三階解鎖的終極技能。"
+      }
+    ]
   },
   {
     "petId": "PET010",
@@ -139,7 +373,33 @@
     "price": 0,
     "enabled": true,
     "dialogues": [],
-    "moveType": "地面型"
+    "moveType": "地面型",
+    "skills": [
+      {
+        "id": "SKILL1",
+        "name": "快速攻擊",
+        "damage": 20,
+        "icon": "⚡",
+        "minStage": 1,
+        "description": "穩定的基礎攻擊。"
+      },
+      {
+        "id": "SKILL2",
+        "name": "能量爆發",
+        "damage": 35,
+        "icon": "✨",
+        "minStage": 2,
+        "description": "第二階後可使用的強力技能。"
+      },
+      {
+        "id": "SKILL3",
+        "name": "終極技能",
+        "damage": 50,
+        "icon": "🌟",
+        "minStage": 3,
+        "description": "第三階解鎖的終極技能。"
+      }
+    ]
   },
   {
     "petId": "PET011",
@@ -152,7 +412,33 @@
     "price": 0,
     "enabled": true,
     "dialogues": [],
-    "moveType": "地面型"
+    "moveType": "地面型",
+    "skills": [
+      {
+        "id": "SKILL1",
+        "name": "快速攻擊",
+        "damage": 20,
+        "icon": "⚡",
+        "minStage": 1,
+        "description": "穩定的基礎攻擊。"
+      },
+      {
+        "id": "SKILL2",
+        "name": "能量爆發",
+        "damage": 35,
+        "icon": "✨",
+        "minStage": 2,
+        "description": "第二階後可使用的強力技能。"
+      },
+      {
+        "id": "SKILL3",
+        "name": "終極技能",
+        "damage": 50,
+        "icon": "🌟",
+        "minStage": 3,
+        "description": "第三階解鎖的終極技能。"
+      }
+    ]
   },
   {
     "petId": "PET012",
@@ -165,7 +451,33 @@
     "price": 0,
     "enabled": true,
     "dialogues": [],
-    "moveType": "地面型"
+    "moveType": "地面型",
+    "skills": [
+      {
+        "id": "SKILL1",
+        "name": "快速攻擊",
+        "damage": 20,
+        "icon": "⚡",
+        "minStage": 1,
+        "description": "穩定的基礎攻擊。"
+      },
+      {
+        "id": "SKILL2",
+        "name": "能量爆發",
+        "damage": 35,
+        "icon": "✨",
+        "minStage": 2,
+        "description": "第二階後可使用的強力技能。"
+      },
+      {
+        "id": "SKILL3",
+        "name": "終極技能",
+        "damage": 50,
+        "icon": "🌟",
+        "minStage": 3,
+        "description": "第三階解鎖的終極技能。"
+      }
+    ]
   },
   {
     "petId": "PET013",
@@ -178,7 +490,33 @@
     "price": 0,
     "enabled": true,
     "dialogues": [],
-    "moveType": "地面型"
+    "moveType": "地面型",
+    "skills": [
+      {
+        "id": "SKILL1",
+        "name": "快速攻擊",
+        "damage": 20,
+        "icon": "⚡",
+        "minStage": 1,
+        "description": "穩定的基礎攻擊。"
+      },
+      {
+        "id": "SKILL2",
+        "name": "能量爆發",
+        "damage": 35,
+        "icon": "✨",
+        "minStage": 2,
+        "description": "第二階後可使用的強力技能。"
+      },
+      {
+        "id": "SKILL3",
+        "name": "終極技能",
+        "damage": 50,
+        "icon": "🌟",
+        "minStage": 3,
+        "description": "第三階解鎖的終極技能。"
+      }
+    ]
   },
   {
     "petId": "PET014",
@@ -191,7 +529,33 @@
     "price": 0,
     "enabled": true,
     "dialogues": [],
-    "moveType": "地面型"
+    "moveType": "地面型",
+    "skills": [
+      {
+        "id": "SKILL1",
+        "name": "快速攻擊",
+        "damage": 20,
+        "icon": "⚡",
+        "minStage": 1,
+        "description": "穩定的基礎攻擊。"
+      },
+      {
+        "id": "SKILL2",
+        "name": "能量爆發",
+        "damage": 35,
+        "icon": "✨",
+        "minStage": 2,
+        "description": "第二階後可使用的強力技能。"
+      },
+      {
+        "id": "SKILL3",
+        "name": "終極技能",
+        "damage": 50,
+        "icon": "🌟",
+        "minStage": 3,
+        "description": "第三階解鎖的終極技能。"
+      }
+    ]
   },
   {
     "petId": "PET015",
@@ -204,7 +568,33 @@
     "price": 0,
     "enabled": true,
     "dialogues": [],
-    "moveType": "地面型"
+    "moveType": "地面型",
+    "skills": [
+      {
+        "id": "SKILL1",
+        "name": "快速攻擊",
+        "damage": 20,
+        "icon": "⚡",
+        "minStage": 1,
+        "description": "穩定的基礎攻擊。"
+      },
+      {
+        "id": "SKILL2",
+        "name": "能量爆發",
+        "damage": 35,
+        "icon": "✨",
+        "minStage": 2,
+        "description": "第二階後可使用的強力技能。"
+      },
+      {
+        "id": "SKILL3",
+        "name": "終極技能",
+        "damage": 50,
+        "icon": "🌟",
+        "minStage": 3,
+        "description": "第三階解鎖的終極技能。"
+      }
+    ]
   },
   {
     "petId": "PET016",
@@ -217,7 +607,33 @@
     "price": 0,
     "enabled": true,
     "dialogues": [],
-    "moveType": "地面型"
+    "moveType": "地面型",
+    "skills": [
+      {
+        "id": "SKILL1",
+        "name": "快速攻擊",
+        "damage": 20,
+        "icon": "⚡",
+        "minStage": 1,
+        "description": "穩定的基礎攻擊。"
+      },
+      {
+        "id": "SKILL2",
+        "name": "能量爆發",
+        "damage": 35,
+        "icon": "✨",
+        "minStage": 2,
+        "description": "第二階後可使用的強力技能。"
+      },
+      {
+        "id": "SKILL3",
+        "name": "終極技能",
+        "damage": 50,
+        "icon": "🌟",
+        "minStage": 3,
+        "description": "第三階解鎖的終極技能。"
+      }
+    ]
   },
   {
     "petId": "PET017",
@@ -230,7 +646,33 @@
     "price": 0,
     "enabled": true,
     "dialogues": [],
-    "moveType": "地面型"
+    "moveType": "地面型",
+    "skills": [
+      {
+        "id": "SKILL1",
+        "name": "快速攻擊",
+        "damage": 20,
+        "icon": "⚡",
+        "minStage": 1,
+        "description": "穩定的基礎攻擊。"
+      },
+      {
+        "id": "SKILL2",
+        "name": "能量爆發",
+        "damage": 35,
+        "icon": "✨",
+        "minStage": 2,
+        "description": "第二階後可使用的強力技能。"
+      },
+      {
+        "id": "SKILL3",
+        "name": "終極技能",
+        "damage": 50,
+        "icon": "🌟",
+        "minStage": 3,
+        "description": "第三階解鎖的終極技能。"
+      }
+    ]
   },
   {
     "petId": "PET018",
@@ -243,7 +685,33 @@
     "price": 0,
     "enabled": true,
     "dialogues": [],
-    "moveType": "地面型"
+    "moveType": "地面型",
+    "skills": [
+      {
+        "id": "SKILL1",
+        "name": "快速攻擊",
+        "damage": 20,
+        "icon": "⚡",
+        "minStage": 1,
+        "description": "穩定的基礎攻擊。"
+      },
+      {
+        "id": "SKILL2",
+        "name": "能量爆發",
+        "damage": 35,
+        "icon": "✨",
+        "minStage": 2,
+        "description": "第二階後可使用的強力技能。"
+      },
+      {
+        "id": "SKILL3",
+        "name": "終極技能",
+        "damage": 50,
+        "icon": "🌟",
+        "minStage": 3,
+        "description": "第三階解鎖的終極技能。"
+      }
+    ]
   },
   {
     "petId": "PET019",
@@ -256,7 +724,33 @@
     "price": 0,
     "enabled": true,
     "dialogues": [],
-    "moveType": "地面型"
+    "moveType": "地面型",
+    "skills": [
+      {
+        "id": "SKILL1",
+        "name": "快速攻擊",
+        "damage": 20,
+        "icon": "⚡",
+        "minStage": 1,
+        "description": "穩定的基礎攻擊。"
+      },
+      {
+        "id": "SKILL2",
+        "name": "能量爆發",
+        "damage": 35,
+        "icon": "✨",
+        "minStage": 2,
+        "description": "第二階後可使用的強力技能。"
+      },
+      {
+        "id": "SKILL3",
+        "name": "終極技能",
+        "damage": 50,
+        "icon": "🌟",
+        "minStage": 3,
+        "description": "第三階解鎖的終極技能。"
+      }
+    ]
   },
   {
     "petId": "PET020",
@@ -269,7 +763,33 @@
     "price": 0,
     "enabled": true,
     "dialogues": [],
-    "moveType": "地面型"
+    "moveType": "地面型",
+    "skills": [
+      {
+        "id": "SKILL1",
+        "name": "快速攻擊",
+        "damage": 20,
+        "icon": "⚡",
+        "minStage": 1,
+        "description": "穩定的基礎攻擊。"
+      },
+      {
+        "id": "SKILL2",
+        "name": "能量爆發",
+        "damage": 35,
+        "icon": "✨",
+        "minStage": 2,
+        "description": "第二階後可使用的強力技能。"
+      },
+      {
+        "id": "SKILL3",
+        "name": "終極技能",
+        "damage": 50,
+        "icon": "🌟",
+        "minStage": 3,
+        "description": "第三階解鎖的終極技能。"
+      }
+    ]
   },
   {
     "petId": "PET022",
@@ -282,7 +802,33 @@
     "price": 0,
     "enabled": true,
     "dialogues": [],
-    "moveType": "地面型"
+    "moveType": "地面型",
+    "skills": [
+      {
+        "id": "SKILL1",
+        "name": "快速攻擊",
+        "damage": 20,
+        "icon": "⚡",
+        "minStage": 1,
+        "description": "穩定的基礎攻擊。"
+      },
+      {
+        "id": "SKILL2",
+        "name": "能量爆發",
+        "damage": 35,
+        "icon": "✨",
+        "minStage": 2,
+        "description": "第二階後可使用的強力技能。"
+      },
+      {
+        "id": "SKILL3",
+        "name": "終極技能",
+        "damage": 50,
+        "icon": "🌟",
+        "minStage": 3,
+        "description": "第三階解鎖的終極技能。"
+      }
+    ]
   },
   {
     "petId": "PET023",
@@ -295,7 +841,33 @@
     "price": 0,
     "enabled": true,
     "dialogues": [],
-    "moveType": "地面型"
+    "moveType": "地面型",
+    "skills": [
+      {
+        "id": "SKILL1",
+        "name": "快速攻擊",
+        "damage": 20,
+        "icon": "⚡",
+        "minStage": 1,
+        "description": "穩定的基礎攻擊。"
+      },
+      {
+        "id": "SKILL2",
+        "name": "能量爆發",
+        "damage": 35,
+        "icon": "✨",
+        "minStage": 2,
+        "description": "第二階後可使用的強力技能。"
+      },
+      {
+        "id": "SKILL3",
+        "name": "終極技能",
+        "damage": 50,
+        "icon": "🌟",
+        "minStage": 3,
+        "description": "第三階解鎖的終極技能。"
+      }
+    ]
   },
   {
     "petId": "PET024",
@@ -308,7 +880,33 @@
     "price": 0,
     "enabled": true,
     "dialogues": [],
-    "moveType": "地面型"
+    "moveType": "地面型",
+    "skills": [
+      {
+        "id": "SKILL1",
+        "name": "快速攻擊",
+        "damage": 20,
+        "icon": "⚡",
+        "minStage": 1,
+        "description": "穩定的基礎攻擊。"
+      },
+      {
+        "id": "SKILL2",
+        "name": "能量爆發",
+        "damage": 35,
+        "icon": "✨",
+        "minStage": 2,
+        "description": "第二階後可使用的強力技能。"
+      },
+      {
+        "id": "SKILL3",
+        "name": "終極技能",
+        "damage": 50,
+        "icon": "🌟",
+        "minStage": 3,
+        "description": "第三階解鎖的終極技能。"
+      }
+    ]
   },
   {
     "petId": "PET025",
@@ -321,6 +919,32 @@
     "price": 0,
     "enabled": true,
     "dialogues": [],
-    "moveType": "地面型"
+    "moveType": "地面型",
+    "skills": [
+      {
+        "id": "SKILL1",
+        "name": "快速攻擊",
+        "damage": 20,
+        "icon": "⚡",
+        "minStage": 1,
+        "description": "穩定的基礎攻擊。"
+      },
+      {
+        "id": "SKILL2",
+        "name": "能量爆發",
+        "damage": 35,
+        "icon": "✨",
+        "minStage": 2,
+        "description": "第二階後可使用的強力技能。"
+      },
+      {
+        "id": "SKILL3",
+        "name": "終極技能",
+        "damage": 50,
+        "icon": "🌟",
+        "minStage": 3,
+        "description": "第三階解鎖的終極技能。"
+      }
+    ]
   }
 ]
