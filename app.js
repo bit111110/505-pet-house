@@ -1,4 +1,4 @@
-const FRONTEND_BUILD='20261004-1735';
+const FRONTEND_BUILD='20261004-1748';
 const BUILTIN_LAND_BACKGROUNDS = {
   'LAND001': 'assets/maps/grassland.png',
   'LAND002': 'assets/maps/forest.png',
@@ -11,6 +11,8 @@ let PET_CONFIGS = {};
 let LAND_CONFIGS = {};
 let STATIC_PETS = [];
 let STATIC_LANDS = [];
+let LIVE_LAND_CONFIGS = {};
+let liveLandCatalogAt = 0;
 
 async function loadStaticGameData(){
   try{
@@ -73,8 +75,10 @@ function applyStaticConfigsToState(s){
         backgroundId:bgId,
         config:cfg?{
           ...(l.config||{}),
-          '土地ID':cfg.landId,'名稱':cfg.name,'價格':cfg.price,'背景圖片':cfg.background,
-          '寬度':cfg.width,'高度':cfg.height,'是否開放':cfg.enabled
+          '土地ID':(l.config?.['土地ID']||cfg.landId),
+          '背景圖片':cfg.background || l.config?.['背景圖片'] || '',
+          '寬度':(l.config?.['寬度']||cfg.width),
+          '高度':(l.config?.['高度']||cfg.height)
         }:(l.config||{})
       };
     });
@@ -84,18 +88,73 @@ function applyStaticConfigsToState(s){
 }
 
 function getLandShopRows(){
-  if(STATIC_LANDS.length){
-    return STATIC_LANDS.filter(l=>l.enabled!==false).map(l=>({
+  const source = Object.keys(LIVE_LAND_CONFIGS).length
+    ? Object.values(LIVE_LAND_CONFIGS)
+    : (STATIC_LANDS||[]).map(l=>({
+        landId:l.landId,name:l.name,price:Number(l.price||0),
+        background:l.background,width:l.width,height:l.height,enabled:l.enabled
+      }));
+
+  return source.filter(l=>l.enabled!==false).map(l=>{
+    const asset=LAND_CONFIGS[String(l.landId)]||{};
+    return {
       '土地ID':l.landId,
       '名稱':l.name,
       '價格':Number(l.price||0),
-      '背景圖片':l.background,
-      '寬度':l.width,
-      '高度':l.height,
-      '是否開放':l.enabled
-    }));
+      '背景圖片':asset.background || l.background || '',
+      '寬度':l.width||asset.width||900,
+      '高度':l.height||asset.height||560,
+      '是否開放':l.enabled!==false
+    };
+  });
+}
+
+function liveLandById(id){
+  const live=LIVE_LAND_CONFIGS[String(id)];
+  const asset=LAND_CONFIGS[String(id)]||{};
+  if(live){
+    return {
+      landId:String(live.landId),
+      name:live.name,
+      price:Number(live.price||0),
+      background:asset.background||live.background||'',
+      width:live.width||asset.width||900,
+      height:live.height||asset.height||560,
+      enabled:live.enabled!==false
+    };
   }
-  return Array.isArray(shop?.lands)?shop.lands:[];
+  return LAND_CONFIGS[String(id)]||null;
+}
+
+async function refreshLiveLandCatalog(forceRender=false){
+  if(!currentId && !forceRender) return null;
+  try{
+    const rows=await gs('getBackgroundCatalogFresh');
+    if(Array.isArray(rows)){
+      LIVE_LAND_CONFIGS=Object.fromEntries(rows.map(r=>[String(r.landId),r]));
+      liveLandCatalogAt=Date.now();
+      saveLocal('landCatalog',rows);
+      if(state && Array.isArray(state.lands)){
+        state.lands=state.lands.map(l=>{
+          const id=String(l.backgroundId||l['背景ID']||'LAND001');
+          const cfg=liveLandById(id);
+          if(!cfg)return l;
+          return {...l,config:{...(l.config||{}),
+            '土地ID':cfg.landId,'名稱':cfg.name,'價格':cfg.price,
+            '背景圖片':cfg.background,'寬度':cfg.width,'高度':cfg.height,'是否開放':cfg.enabled
+          }};
+        });
+      }
+      if(forceRender){
+        if(currentTab==='shop')renderShop();
+        if(currentTab==='home')renderHome();
+        renderYard();
+      }
+    }
+    return rows;
+  }catch(e){
+    return null;
+  }
 }
 
 let currentId='',state=null,currentTab='home',wanderTimer=null,inventory=[],mailbox=[],shop=null,adminData=null,challenge={subject:'',petId:'',question:null};
@@ -124,6 +183,11 @@ function hydrateLocalStudentCache(){
   if(Array.isArray(inv)){inventory=inv;CLIENT_CACHE.inventory=inv;CLIENT_CACHE.inventoryAt=Date.now();}
   const sh=loadLocal('shop');
   if(sh){shop=sh;CLIENT_CACHE.shop=sh;CLIENT_CACHE.shopAt=Date.now();}
+  const lc=loadLocal('landCatalog');
+  if(Array.isArray(lc)){
+    LIVE_LAND_CONFIGS=Object.fromEntries(lc.map(r=>[String(r.landId),r]));
+    liveLandCatalogAt=Date.now();
+  }
 }
 
 async function gs(fn,...args){
@@ -188,12 +252,7 @@ async function prefetchStudentData(){
     gs('getInventory',currentId).then(r=>{
       if(Array.isArray(r)){inventory=r;CLIENT_CACHE.inventory=r;CLIENT_CACHE.inventoryAt=Date.now();saveLocal('inventory',r);}
     }).catch(()=>null),
-    Promise.resolve().then(()=>{
-      if(STATIC_LANDS.length){
-        shop={lands:getLandShopRows(),furniture:[]};
-        CLIENT_CACHE.shop=shop;CLIENT_CACHE.shopAt=Date.now();saveLocal('shop',shop);
-      }
-    })
+    refreshLiveLandCatalog(true)
   ];
   Promise.allSettled(jobs);
 }
@@ -314,7 +373,7 @@ function switchTab(tab,btn){currentTab=tab;document.querySelectorAll('.tabbtn').
 async function renderCurrentTab(){if(currentTab==='home')renderHome();if(currentTab==='upgrade')await renderUpgrade();if(currentTab==='bag')await renderBag();if(currentTab==='challenge')renderChallengeHome();if(currentTab==='mail')await renderMail();if(currentTab==='shop')await renderShop();}
 function renderHome(){
   const petsHere=state.pets.filter(p=>String(p.landId)===String(state.activeLandId));
-  const ownedBgs=(state.backgrounds||[]).map(id=>LAND_CONFIGS[id]).filter(Boolean);
+  const ownedBgs=(state.backgrounds||[]).map(id=>liveLandById(id)).filter(Boolean);
   const activePlot=state.lands.find(l=>String(l['土地ID'])===String(state.activeLandId))||state.lands[0];
   panel.innerHTML=`<h3>🏠 小屋管理</h3>
     <div class="home-section"><h4>土地切換</h4><div class="row">${state.lands.map((l,i)=>`<button class="btn ${String(l['土地ID'])===String(state.activeLandId)?'gray':'secondary'}" onclick="changeLand('${l['土地ID']}')">土地 ${l.plotIndex||i+1}</button>`).join('')}</div><p class="small">目前背景：${esc(activePlot?.config?.['名稱']||'')}</p></div>
@@ -477,11 +536,12 @@ async function renderShop(){
   const ownedBg=new Set((state.backgrounds||[]).map(String));
   const activePlot=state.lands.find(l=>String(l['土地ID'])===String(state.activeLandId));
   panel.innerHTML=`<h3>🛒 土地與背景</h3>
-  <div class="home-section"><h4>➕ 購買土地</h4><p>每購買一次增加 1 格土地。</p><p><b>價格：🪙 2000</b></p><button class="btn secondary" onclick="buyPlotUI()">購買 +1 土地</button></div>
-  <h4>🖼️ 背景商店</h4><div class="shop-grid">${STATIC_LANDS.filter(l=>l.enabled!==false).map(bg=>{
-    const owned=ownedBg.has(String(bg.landId));
-    const using=String(activePlot?.backgroundId)===String(bg.landId);
-    return `<div class="itemcard"><b>${esc(bg.name)}</b><div class="bg-thumb" style="background-image:url('${esc(bg.background)}')"></div><span>🪙 ${Number(bg.price||0)}</span><br>${owned?`<button class="btn ${using?'gray':'blue'}" ${using?'disabled':''} onclick="useBackgroundFromShop('${bg.landId}')">${using?'目前使用中':'套用到目前土地'}</button>`:`<button class="btn blue" onclick="buyBackgroundUI('${bg.landId}')">購買背景</button>`}</div>`;
+  <div class="row" style="justify-content:flex-end"><button class="btn gray" onclick="refreshLiveLandCatalog(true)">↻ 更新背景資料</button></div><div class="home-section"><h4>➕ 購買土地</h4><p>每購買一次增加 1 格土地。</p><p><b>價格：🪙 2000</b></p><button class="btn secondary" onclick="buyPlotUI()">購買 +1 土地</button></div>
+  <h4>🖼️ 背景商店</h4><div class="shop-grid">${getLandShopRows().map(bg=>{
+    const id=String(bg['土地ID']);
+    const owned=ownedBg.has(id);
+    const using=String(activePlot?.backgroundId)===id;
+    return `<div class="itemcard"><b>${esc(bg['名稱'])}</b><div class="bg-thumb" style="background-image:url('${esc(bg['背景圖片'])}')"></div><span>🪙 ${Number(bg['價格']||0)}</span><br>${owned?`<button class="btn ${using?'gray':'blue'}" ${using?'disabled':''} onclick="useBackgroundFromShop('${id}')">${using?'目前使用中':'套用到目前土地'}</button>`:`<button class="btn blue" onclick="buyBackgroundUI('${id}')">購買背景</button>`}</div>`;
   }).join('')}</div>`;
 }
 async function buyPlotUI(){
@@ -508,7 +568,7 @@ async function useBackgroundFromShop(id){
   const plot=state.lands.find(l=>String(l['土地ID'])===String(state.activeLandId));
   if(!plot)return alert('找不到目前土地');
   const oldBg=plot.backgroundId,oldConfig=plot.config;
-  const cfg=LAND_CONFIGS[String(id)];
+  const cfg=liveLandById(id);
   if(!cfg)return alert('找不到背景設定');
   // 先立即換畫面，避免學生覺得按鈕沒有作用。
   plot.backgroundId=String(id);plot['背景ID']=String(id);plot.config={...(plot.config||{}),'土地ID':cfg.landId,'名稱':cfg.name,'價格':cfg.price,'背景圖片':cfg.background,'寬度':cfg.width,'高度':cfg.height,'是否開放':cfg.enabled};
