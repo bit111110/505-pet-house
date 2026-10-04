@@ -1,4 +1,4 @@
-const FRONTEND_BUILD='20261004-1845';
+const FRONTEND_BUILD='20261004-1910';
 const BUILTIN_LAND_BACKGROUNDS = {
   'LAND001': 'assets/maps/grassland.png',
   'LAND002': 'assets/maps/forest.png',
@@ -91,8 +91,17 @@ function getLandShopRows(){
   const source = Object.keys(LIVE_LAND_CONFIGS).length
     ? Object.values(LIVE_LAND_CONFIGS)
     : (STATIC_LANDS||[]).map(l=>({
-        landId:l.landId,name:l.name,price:Number(l.price||0),
-        background:l.background,width:l.width,height:l.height,enabled:l.enabled
+        landId:l.landId,
+        name:l.name,
+        price:Number(l.price||0),
+        background:l.background,
+        width:l.width,
+        height:l.height,
+        enabled:l.enabled,
+        acquireType:'金幣',
+        exchangeItemId:'',
+        exchangeQty:0,
+        exchangeItemName:''
       }));
 
   return source.filter(l=>l.enabled!==false).map(l=>{
@@ -100,11 +109,17 @@ function getLandShopRows(){
     return {
       '土地ID':l.landId,
       '名稱':l.name,
-      '價格':Number(l.price||0),
+      '價格':(l.price===''||l.price===null||l.price===undefined)?'':Number(l.price),
       '背景圖片':asset.background || l.background || '',
       '寬度':l.width||asset.width||900,
       '高度':l.height||asset.height||560,
-      '是否開放':l.enabled!==false
+      '是否開放':l.enabled!==false,
+
+      // V5.6.3：保留 Google 試算表的取得方式資料。
+      '取得方式':String(l.acquireType||'金幣'),
+      '兌換道具ID':String(l.exchangeItemId||''),
+      '兌換數量':(l.exchangeQty===''||l.exchangeQty===null||l.exchangeQty===undefined)?'':Number(l.exchangeQty),
+      '兌換道具名稱':String(l.exchangeItemName||l.exchangeItemId||'')
     };
   });
 }
@@ -116,11 +131,15 @@ function liveLandById(id){
     return {
       landId:String(live.landId),
       name:live.name,
-      price:Number(live.price||0),
+      price:(live.price===''||live.price===null||live.price===undefined)?'':Number(live.price),
       background:asset.background||live.background||'',
       width:live.width||asset.width||900,
       height:live.height||asset.height||560,
-      enabled:live.enabled!==false
+      enabled:live.enabled!==false,
+      acquireType:String(live.acquireType||'金幣'),
+      exchangeItemId:String(live.exchangeItemId||''),
+      exchangeQty:(live.exchangeQty===''||live.exchangeQty===null||live.exchangeQty===undefined)?'':Number(live.exchangeQty),
+      exchangeItemName:String(live.exchangeItemName||live.exchangeItemId||'')
     };
   }
   return LAND_CONFIGS[String(id)]||null;
