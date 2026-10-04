@@ -1,4 +1,4 @@
-const FRONTEND_BUILD='20261004-1910';
+const FRONTEND_BUILD='20261004-1935';
 const BUILTIN_LAND_BACKGROUNDS = {
   'LAND001': 'assets/maps/grassland.png',
   'LAND002': 'assets/maps/forest.png',
@@ -147,33 +147,28 @@ function liveLandById(id){
 
 async function refreshLiveLandCatalog(forceRender=false){
   if(!currentId && !forceRender) return null;
-  try{
-    const rows=await gs('getBackgroundCatalogFresh');
-    if(Array.isArray(rows)){
-      LIVE_LAND_CONFIGS=Object.fromEntries(rows.map(r=>[String(r.landId),r]));
-      liveLandCatalogAt=Date.now();
-      saveLocal('landCatalog',rows);
-      if(state && Array.isArray(state.lands)){
-        state.lands=state.lands.map(l=>{
-          const id=String(l.backgroundId||l['背景ID']||'LAND001');
-          const cfg=liveLandById(id);
-          if(!cfg)return l;
-          return {...l,config:{...(l.config||{}),
-            '土地ID':cfg.landId,'名稱':cfg.name,'價格':cfg.price,
-            '背景圖片':cfg.background,'寬度':cfg.width,'高度':cfg.height,'是否開放':cfg.enabled
-          }};
-        });
-      }
-      if(forceRender){
-        if(currentTab==='shop')renderShop();
-        if(currentTab==='home')renderHome();
-        renderYard();
-      }
-    }
-    return rows;
-  }catch(e){
-    return null;
+  const rows=await gs('getBackgroundCatalogFresh');
+  if(!Array.isArray(rows))throw new Error('背景設定同步失敗：後端沒有回傳背景資料');
+  LIVE_LAND_CONFIGS=Object.fromEntries(rows.map(r=>[String(r.landId),r]));
+  liveLandCatalogAt=Date.now();
+  saveLocal('landCatalog',rows);
+
+  if(state && Array.isArray(state.lands)){
+    state.lands=state.lands.map(l=>{
+      const id=String(l.backgroundId||l['背景ID']||'LAND001');
+      const cfg=liveLandById(id);
+      if(!cfg)return l;
+      return {...l,config:{...(l.config||{}),
+        '土地ID':cfg.landId,'名稱':cfg.name,'價格':cfg.price,
+        '背景圖片':cfg.background,'寬度':cfg.width,'高度':cfg.height,'是否開放':cfg.enabled
+      }};
+    });
   }
+  if(forceRender){
+    if(currentTab==='home')renderHome();
+    renderYard();
+  }
+  return rows;
 }
 
 let currentId='',state=null,currentTab='home',mainMode='home',wanderTimer=null,inventory=[],mailbox=[],shop=null,adminData=null,challenge={subject:'',petId:'',question:null};
@@ -633,16 +628,21 @@ function inventoryQty(itemId){
   return Number(row?.quantity||0);
 }
 function backgroundAcquireInfo(bg){
-  const raw=String(bg['取得方式']??bg.acquireType??'').trim();
-  const method=(raw==='寶物'||raw.includes('兌換'))?'寶物':'金幣';
-  const coinPriceRaw=(bg['價格']??bg.price);
-  const coinPrice=(coinPriceRaw===''||coinPriceRaw===null||coinPriceRaw===undefined)?null:Number(coinPriceRaw);
+  const raw=String(bg['取得方式']??bg.acquireType??'').trim().replace(/\s+/g,'');
   const itemId=String(bg['兌換道具ID']??bg.exchangeItemId??'').trim();
   const qtyRaw=(bg['兌換數量']??bg.exchangeQty);
   const qty=(qtyRaw===''||qtyRaw===null||qtyRaw===undefined)?null:Number(qtyRaw);
+
+  // V5.6.4：只要有「兌換道具ID + 正數兌換數量」，一律視為寶物背景。
+  // 這樣即使舊快取把取得方式誤傳成金幣，也不會跑錯區。
+  const hasTreasureRule=!!itemId && Number.isFinite(qty) && qty>0;
+  const method=(raw==='寶物'||raw.includes('兌換')||hasTreasureRule)?'寶物':'金幣';
+
+  const coinPriceRaw=(bg['價格']??bg.price);
+  const coinPrice=(coinPriceRaw===''||coinPriceRaw===null||coinPriceRaw===undefined)?null:Number(coinPriceRaw);
   const itemName=String(bg['兌換道具名稱']??bg.exchangeItemName??itemId);
   const validCoin=method==='金幣' && Number.isFinite(coinPrice) && coinPrice>0;
-  const validTreasure=method==='寶物' && !!itemId && Number.isFinite(qty) && qty>0;
+  const validTreasure=method==='寶物' && hasTreasureRule;
   return {method,coinPrice,itemId,qty,itemName,validCoin,validTreasure};
 }
 async function redeemBackgroundUI(id){
@@ -663,6 +663,17 @@ async function redeemBackgroundUI(id){
 }
 
 async function renderShop(){
+  panel.innerHTML=`<h3>🛒 土地／背景</h3><div class="itemcard">正在同步最新背景設定...</div>`;
+
+  // 每次進入商店都直接抓一次試算表最新設定。
+  // 不再拿舊 localStorage / GitHub JSON 判斷金幣或寶物分類。
+  try{
+    await refreshLiveLandCatalog(false);
+  }catch(e){
+    panel.innerHTML=`<h3>🛒 土地／背景</h3><div class="itemcard"><b>⚠️ 背景設定同步失敗</b><br>${esc(e.message||e)}<br><br><button class="btn" onclick="renderShop()">重新同步</button></div>`;
+    return;
+  }
+
   if(!Array.isArray(inventory))inventory=[];
   if(!inventory.length){
     try{inventory=await gs('getInventory',currentId);}catch(e){}
@@ -706,22 +717,14 @@ async function renderShop(){
         action=`<button class="btn gray" disabled>不可購買</button>`;
       }
     }
-
     return `<div class="itemcard"><b>${esc(bg['名稱'])}</b><div class="bg-thumb" style="background-image:url('${esc(bg['背景圖片'])}')"></div>${costLine}<br>${action}</div>`;
   };
 
   panel.innerHTML=`<h3>🛒 土地／背景</h3>
-  <div class="row" style="justify-content:flex-end"><button class="btn gray" onclick="refreshLiveLandCatalog(true)">↻ 更新背景資料</button></div>
-
-  <div class="home-section">
-    <h4>➕ 購買土地</h4>
-    <p>每增加 1 格土地：🪙 2000</p>
-    <button class="btn" onclick="buyPlotUI()">購買 1 格土地</button>
-  </div>
-
+  <div class="row" style="justify-content:space-between;align-items:center"><span class="success">✓ 已同步試算表最新設定</span><button class="btn gray" onclick="renderShop()">↻ 重新同步</button></div>
+  <div class="home-section"><h4>➕ 購買土地</h4><p>每增加 1 格土地：🪙 2000</p><button class="btn" onclick="buyPlotUI()">購買 1 格土地</button></div>
   <h4>🪙 金幣背景</h4>
   <div class="shop-grid">${coinRows.map(cardHtml).join('')||'<div class="itemcard">目前沒有金幣背景。</div>'}</div>
-
   <h4 style="margin-top:18px">🎁 寶物兌換背景</h4>
   <div class="shop-grid">${treasureRows.map(cardHtml).join('')||'<div class="itemcard">目前沒有寶物兌換背景。</div>'}</div>`;
 }
