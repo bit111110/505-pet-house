@@ -5,7 +5,23 @@ const BUILTIN_LAND_BACKGROUNDS = {
   'LAND003': 'assets/maps/beach.png',
   'LAND004': 'assets/maps/snowfield.png'
 };
+let PET_CONFIGS = {};
+let LAND_CONFIGS = {};
 
+async function loadStaticGameData() {
+  const [pets, lands] = await Promise.all([
+    fetch('data/pets.json').then(r => r.json()),
+    fetch('data/lands.json').then(r => r.json())
+  ]);
+
+  PET_CONFIGS = Object.fromEntries(
+    pets.map(p => [p.petId, p])
+  );
+
+  LAND_CONFIGS = Object.fromEntries(
+    lands.map(l => [l.landId, l])
+  );
+}
 let currentId='',state=null,currentTab='home',wanderTimer=null,inventory=[],mailbox=[],shop=null,adminData=null,challenge={subject:'',petId:'',question:null};
 let mailboxLoaded=false,mailboxAt=0,mailRefreshPromise=null,backgroundMailTimer=null;
 const CLIENT_CACHE={shop:null,shopAt:0,inventory:null,inventoryAt:0};
