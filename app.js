@@ -1,4 +1,4 @@
-const FRONTEND_BUILD='20261004-2250';
+const FRONTEND_BUILD='20261004-2320';
 const BUILTIN_LAND_BACKGROUNDS = {
   'LAND001': 'assets/maps/grassland.png',
   'LAND002': 'assets/maps/forest.png',
@@ -16,7 +16,7 @@ let liveLandCatalogAt = 0;
 let MONSTER_CONFIGS = {};
 let MONSTER_LIST = [];
 let BATTLE_BG_LIST = [];
-let PET_SKILL_LIST = [];
+let PET_BATTLE_CONFIGS = {};
 
 async function loadStaticGameData(){
   try{
@@ -275,7 +275,9 @@ async function prefetchStudentData(){
       MONSTER_CONFIGS=Object.fromEntries(MONSTER_LIST.map(m=>[String(m.monsterId),m]));
     }
     if(Array.isArray(r?.battleBackgrounds))BATTLE_BG_LIST=r.battleBackgrounds;
-    if(Array.isArray(r?.petSkills))PET_SKILL_LIST=r.petSkills;
+    if(Array.isArray(r?.petBattleConfigs)){
+      PET_BATTLE_CONFIGS=Object.fromEntries(r.petBattleConfigs.map(x=>[String(x.petId),x]));
+    }
     if(state){
       state.unreadMail=Number(r?.unreadMail||0);
       mailBadge.textContent=state.unreadMail;
@@ -429,19 +431,45 @@ function getBattleBackground(subject){
   const list=(BATTLE_BG_LIST||[]).filter(x=>x.enabled!==false && (String(x.subject||'全部')==='全部'||String(x.subject)===String(subject||'')));
   return list[0]||null;
 }
-function getPetAttribute(pet){ return String(pet?.attribute||'光'); }
+function getPetBattleConfig(pet){
+  return PET_BATTLE_CONFIGS[String(pet?.petId)]||{};
+}
+function getPetAttribute(pet){
+  const b=getPetBattleConfig(pet);
+  return String(b.attribute||pet?.attribute||'光');
+}
+
+const ATTRIBUTE_SKILLS={
+  '光':[[1,'微光彈',20],[5,'聖光閃耀',30],[10,'光之衝擊',45],[15,'耀光之矛',60],[20,'神聖爆發',80],[25,'天穹聖輝',105]],
+  '地':[[1,'岩石撞擊',20],[5,'地裂震波',30],[10,'岩壁重擊',45],[15,'大地震擊',60],[20,'巨岩崩落',80],[25,'大地怒吼',105]],
+  '暗':[[1,'暗影彈',20],[5,'黑夜侵襲',30],[10,'闇之利刃',45],[15,'深淵衝擊',60],[20,'暗月爆裂',80],[25,'永夜吞噬',105]],
+  '草':[[1,'葉片飛刃',20],[5,'藤蔓纏繞',30],[10,'森林之息',45],[15,'荊棘突襲',60],[20,'翠綠風暴',80],[25,'萬木甦醒',105]],
+  '水':[[1,'水滴衝擊',20],[5,'水流彈',30],[10,'激流衝鋒',45],[15,'海浪爆破',60],[20,'巨浪奔襲',80],[25,'深海怒濤',105]],
+  '毒':[[1,'毒液噴射',20],[5,'毒霧侵蝕',30],[10,'猛毒爆彈',45],[15,'劇毒之牙',60],[20,'毒沼擴散',80],[25,'萬毒侵襲',105]],
+  '火':[[1,'火苗彈',20],[5,'烈焰衝擊',30],[10,'火焰爆裂',45],[15,'炎龍吐息',60],[20,'火海爆發',80],[25,'煉獄烈焰',105]],
+  '電':[[1,'電光衝擊',20],[5,'雷擊',30],[10,'閃電連鎖',45],[15,'雷霆爆破',60],[20,'落雷風暴',80],[25,'天雷裁決',105]],
+  '冰':[[1,'冰晶彈',20],[5,'冰錐突刺',30],[10,'寒冰衝擊',45],[15,'冰封爆裂',60],[20,'冰川崩落',80],[25,'極寒暴風',105]],
+  '風':[[1,'風刃',20],[5,'疾風突襲',30],[10,'旋風斬',45],[15,'暴風衝擊',60],[20,'龍捲風暴',80],[25,'蒼穹颶風',105]],
+  '鋼':[[1,'鋼鐵衝撞',20],[5,'金屬利刃',30],[10,'鐵壁重擊',45],[15,'鋼鐵爆裂',60],[20,'金屬風暴',80],[25,'鋼之審判',105]],
+  '混沌':[[1,'混沌彈',20],[5,'扭曲之力',30],[10,'虛空爆裂',45],[15,'混亂衝擊',60],[20,'次元崩壞',80],[25,'混沌吞噬',105]]
+};
+const GENERAL_SKILLS=[[3,'奮力一擊',25],[7,'連續攻擊',35],[13,'集中攻擊',50],[17,'強力突擊',65],[23,'極限爆發',85],[27,'全力一擊',110]];
+
 function getConfiguredPetSkills(pet){
-  const rows=(PET_SKILL_LIST||[]).filter(s=>String(s.petId)===String(pet?.petId) && s.enabled!==false && Number(pet?.level||1)>=Number(s.unlockLevel||1));
-  if(rows.length){
-    return rows.map(s=>({
-      id:s.skillId,
-      name:s.name,
-      icon:s.icon||'✨',
-      attribute:s.attribute||getPetAttribute(pet),
-      damage:Math.max(1,Math.round(Number(s.baseDamage||0)+(Number(pet?.level||1)-1)*Number(s.damageGrowth||0)))
-    }));
+  const lv=Math.min(30,Math.max(1,Number(pet?.level||1)));
+  const attr=getPetAttribute(pet);
+  const result=[];
+  (ATTRIBUTE_SKILLS[attr]||ATTRIBUTE_SKILLS['光']).forEach(([unlock,name,damage])=>{
+    if(lv>=unlock)result.push({id:`ATTR-${attr}-${unlock}`,name,damage,attribute:attr,kind:'attribute',unlockLevel:unlock});
+  });
+  GENERAL_SKILLS.forEach(([unlock,name,damage])=>{
+    if(lv>=unlock)result.push({id:`GEN-${unlock}`,name,damage,attribute:'一般',kind:'general',unlockLevel:unlock});
+  });
+  const cfg=getPetBattleConfig(pet);
+  if(lv>=30 && cfg.specialName){
+    result.push({id:`SPECIAL-${pet.petId}`,name:String(cfg.specialName),damage:Math.max(1,Number(cfg.specialDamage||150)),attribute:attr,kind:'special',unlockLevel:30});
   }
-  return getPetSkills(pet);
+  return result.sort((a,b)=>a.unlockLevel-b.unlockLevel);
 }
 
 function switchMainMode(mode){
@@ -586,7 +614,7 @@ function renderBattle(){
   panel.innerHTML=`<h3>⚔️ ${esc(challenge.subject)}對戰控制</h3>
   <div class="petcard"><b>${esc(pet.name)}</b> Lv.${pet.level}・第${pet.stage}階<br><span class="small">怪物 ${challenge.monsterNo}｜HP ${Math.ceil(challenge.monsterHp)} / ${challenge.monsterMaxHp}</span></div>
   ${challenge.lastMsg?`<div style="margin:8px 0">${challenge.lastMsg}</div>`:''}
-  <h4>選擇技能</h4><div class="skill-grid">${skills.map(s=>`<button class="btn purple skill-btn" onclick="useBattleSkill('${s.id}')"><b>${attributeIconHtml(s.attribute||getPetAttribute(pet),20)} ${esc(s.icon||'✨')} ${esc(s.name)}</b><br><span class="small" style="color:white">威力 ${s.damage}</span></button>`).join('')}</div>
+  <h4>選擇技能</h4><div class="skill-grid">${skills.map(s=>`<button class="btn purple skill-btn" onclick="useBattleSkill('${s.id}')"><b>${s.kind==='general'?'⚔️':attributeIconHtml(s.attribute||getPetAttribute(pet),20)} ${esc(s.name)}</b><br><span class="small" style="color:white">威力 ${s.damage}</span></button>`).join('')}</div>
   <div class="nav"><button class="btn gray" onclick="finishChallengeUI()">結束對戰</button><button class="btn secondary" onclick="switchMainMode('home')">看一下小屋</button></div>`;
 }
 function useBattleSkill(skillId){const pet=state.pets.find(p=>p.petId===challenge.petId);const skill=getConfiguredPetSkills(pet).find(s=>String(s.id)===String(skillId));if(!skill)return;challenge.selectedSkill=skill;if(!challenge.questions?.length || challenge.qIndex>=challenge.questions.length){loadMoreBattleQuestions();return;}challenge.question=challenge.questions[challenge.qIndex];renderBattleQuestion();}
