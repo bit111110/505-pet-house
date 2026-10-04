@@ -1,4 +1,4 @@
-const FRONTEND_BUILD='20261004-1605';
+const FRONTEND_BUILD='20261004-1618';
 const BUILTIN_LAND_BACKGROUNDS = {
   'LAND001': 'assets/maps/grassland.png',
   'LAND002': 'assets/maps/forest.png',
@@ -101,7 +101,7 @@ function getLandShopRows(){
   return Array.isArray(shop?.lands)?shop.lands:[];
 }
 
-let currentId='' '',state=null,currentTab='home',wanderTimer=null,inventory=[],mailbox=[],shop=null,adminData=null,challenge={subject:'',petId:'',question:null};
+let currentId='',state=null,currentTab='home',wanderTimer=null,inventory=[],mailbox=[],shop=null,adminData=null,challenge={subject:'',petId:'',question:null};
 let mailboxLoaded=false,mailboxAt=0,mailRefreshPromise=null,backgroundMailTimer=null;
 const CLIENT_CACHE={shop:null,shopAt:0,inventory:null,inventoryAt:0};
 function cacheFresh(ts,ms=300000){return Date.now()-ts<ms;}
