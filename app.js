@@ -1,4 +1,4 @@
-const FRONTEND_BUILD='20261004-1748';
+const FRONTEND_BUILD='20261004-1815';
 const BUILTIN_LAND_BACKGROUNDS = {
   'LAND001': 'assets/maps/grassland.png',
   'LAND002': 'assets/maps/forest.png',
@@ -157,7 +157,7 @@ async function refreshLiveLandCatalog(forceRender=false){
   }
 }
 
-let currentId='',state=null,currentTab='home',wanderTimer=null,inventory=[],mailbox=[],shop=null,adminData=null,challenge={subject:'',petId:'',question:null};
+let currentId='',state=null,currentTab='home',mainMode='home',wanderTimer=null,inventory=[],mailbox=[],shop=null,adminData=null,challenge={subject:'',petId:'',question:null};
 let mailboxLoaded=false,mailboxAt=0,mailRefreshPromise=null,backgroundMailTimer=null;
 const CLIENT_CACHE={shop:null,shopAt:0,inventory:null,inventoryAt:0};
 function cacheFresh(ts,ms=300000){return Date.now()-ts<ms;}
@@ -304,7 +304,7 @@ async function login(){
     currentTab='home';
     document.querySelectorAll('.tabbtn').forEach(x=>x.classList.remove('active'));
     document.querySelector('[data-tab="home"]')?.classList.add('active');
-    renderHome();
+    renderHome();switchMainMode('home');
 
     // UI 已經顯示後才背景預抓；不阻塞登入。
     prefetchStudentData();
@@ -327,6 +327,51 @@ function normalizeMapUrlFast(url){
   m=s.match(/[?&]id=([^&]+)/i);
   if(/drive\.google\.com/i.test(s)&&m)return 'https://drive.google.com/thumbnail?id='+m[1]+'&sz=w1200';
   return s;
+}
+
+
+function switchMainMode(mode){
+  mainMode=mode==='battle'?'battle':'home';
+  const y=document.getElementById('yard'),b=document.getElementById('battleMain');
+  const hb=document.getElementById('homeModeBtn'),bb=document.getElementById('battleModeBtn');
+  if(y)y.classList.toggle('hidden',mainMode!=='home');
+  if(b)b.classList.toggle('hidden',mainMode!=='battle');
+  hb?.classList.toggle('active',mainMode==='home');
+  bb?.classList.toggle('active',mainMode==='battle');
+  if(mainMode==='home')renderYard();else renderBattleMain();
+}
+function renderBattleMain(){
+  const root=document.getElementById('battleMain');if(!root)return;
+  root.classList.remove('empty');
+  const pet=state?.pets?.find(p=>String(p.petId)===String(challenge.petId));
+  if(!pet || !challenge.subject){
+    root.classList.add('empty');
+    root.innerHTML=`<div><div style="font-size:74px">⚔️</div><h2>寵物對戰</h2><p>請從右側選擇科目與出戰寵物。</p><button class="btn blue" onclick="switchTab('challenge',document.querySelector('[data-tab=challenge]'))">選擇對戰</button></div>`;
+    return;
+  }
+  const mhp=Math.max(0,Number(challenge.monsterHp??challenge.monsterMaxHp??100));
+  const mmax=Math.max(1,Number(challenge.monsterMaxHp||100));
+  root.innerHTML=`<div class="battle-main-scene">
+    <div class="battle-sky"></div><div class="battle-ground"></div>
+    <div class="battle-status"><div><b>${esc(challenge.subject)}對戰</b>　怪物 ${challenge.monsterNo||1}</div><div>答對 ${challenge.status?.correct||0}　<span class="lives">${'❤️'.repeat(Math.max(0,3-(challenge.status?.wrong||0)))}${'🖤'.repeat(challenge.status?.wrong||0)}</span></div></div>
+    <div class="battle-pet-side"><div class="battle-pet-name">${esc(pet.name)}</div><div id="battlePetSprite" class="battle-pet-sprite">${getPetImage(pet.petId,pet.stage)?`<img src="${getPetImage(pet.petId,pet.stage)}">`:'🐾'}</div></div>
+    <div class="battle-monster-side"><div class="battle-monster-name">怪物 ${challenge.monsterNo||1}</div><div id="battleMonsterSprite" class="battle-monster-sprite">👾</div><div class="hpbar"><div style="width:${Math.max(0,mhp/mmax*100)}%"></div></div><small>HP ${Math.ceil(mhp)} / ${mmax}</small></div>
+  </div>`;
+}
+function playPetAttackAnimation(damage){
+  return new Promise(resolve=>{
+    const pet=document.getElementById('battlePetSprite');
+    const mon=document.getElementById('battleMonsterSprite');
+    const root=document.getElementById('battleMain');
+    if(pet){pet.classList.remove('attack-lunge');void pet.offsetWidth;pet.classList.add('attack-lunge');}
+    setTimeout(()=>{
+      if(mon){mon.classList.remove('hit-shake');void mon.offsetWidth;mon.classList.add('hit-shake');}
+      if(root){
+        const d=document.createElement('div');d.className='battle-damage-float';d.textContent='-'+damage;root.appendChild(d);setTimeout(()=>d.remove(),850);
+      }
+    },260);
+    setTimeout(resolve,620);
+  });
 }
 
 function renderYard(){
@@ -369,7 +414,7 @@ function wanderPets(){
   }
 }
 function petTalk(p,el){document.querySelectorAll('.bubble').forEach(x=>x.remove());const b=document.createElement('div');b.className='bubble';b.textContent=p.dialogs[Math.floor(Math.random()*p.dialogs.length)];b.style.left=(el.offsetLeft+el.offsetWidth/2)+'px';b.style.top=el.offsetTop+'px';yard.appendChild(b);setTimeout(()=>b.remove(),2400);}
-function switchTab(tab,btn){currentTab=tab;document.querySelectorAll('.tabbtn').forEach(x=>x.classList.remove('active'));btn?.classList.add('active');renderCurrentTab();}
+function switchTab(tab,btn){currentTab=tab;if(tab==='home')switchMainMode('home');if(tab==='challenge')switchMainMode('battle');document.querySelectorAll('.tabbtn').forEach(x=>x.classList.remove('active'));btn?.classList.add('active');renderCurrentTab();}
 async function renderCurrentTab(){if(currentTab==='home')renderHome();if(currentTab==='upgrade')await renderUpgrade();if(currentTab==='bag')await renderBag();if(currentTab==='challenge')renderChallengeHome();if(currentTab==='mail')await renderMail();if(currentTab==='shop')await renderShop();}
 function renderHome(){
   const petsHere=state.pets.filter(p=>String(p.landId)===String(state.activeLandId));
@@ -380,7 +425,7 @@ function renderHome(){
     <div class="home-section"><h4>🖼️ 這塊土地的背景</h4><select id="homeBg" class="full">${ownedBgs.map(bg=>`<option value="${bg.landId}" ${String(bg.landId)===String(activePlot?.backgroundId)?'selected':''}>${esc(bg.name)}</option>`).join('')}</select><button class="btn blue" style="margin-top:7px" onclick="applyHomeBackground()">套用背景</button></div>
     <div class="home-section"><h4>🐾 分配寵物到土地</h4>${state.pets.map(p=>`<div class="petcard"><b>${esc(p.nickname||p.name)}</b><div class="row" style="margin-top:6px"><select id="plot-${p.petId}">${state.lands.map((l,i)=>`<option value="${l['土地ID']}" ${String(p.landId)===String(l['土地ID'])?'selected':''}>土地 ${l.plotIndex||i+1}</option>`).join('')}</select><button class="btn" onclick="movePetUI('${p.petId}')">分配</button></div></div>`).join('')}</div>
     <h4>目前土地上的寵物</h4>${petsHere.map(p=>petCardHtml(p)).join('')||'<div class="petcard">目前這塊土地沒有寵物。</div>'}
-    <button class="btn blue" style="width:100%;margin:8px 0" onclick="switchTab('challenge',document.querySelector('[data-tab=challenge]'))">⚔️ 前往對戰挑戰</button>`;
+    <button class="btn blue" style="width:100%;margin:8px 0" onclick="switchMainMode('battle');switchTab('challenge',document.querySelector('[data-tab=challenge]'))">⚔️ 切換到對戰畫面</button>`;
 }
 function petCardHtml(p){const pct=Math.min(100,p.exp/p.expNeed*100);return `<div class="petcard"><b>${esc(p.nickname||p.name)}</b> <span class="small">${esc(p.movementType)}</span><br>Lv.${p.level}・第${p.stage}階<div class="xp"><div style="width:${pct}%"></div></div><small>EXP ${p.exp}/${p.expNeed}</small></div>`;}
 async function changeLand(id){try{const r=await gs('setActiveLandFast',currentId,id);state.activeLandId=r.activeLandId;state.furniture=Array.isArray(r.furniture)?r.furniture:[];renderYard();renderHome();}catch(e){alert(e.message||e);}}
@@ -402,7 +447,7 @@ async function useExp(itemId){
 }
 async function renderBag(){if(!Array.isArray(inventory)||!inventory.length)inventory=await gs('getInventory',currentId);panel.innerHTML=`<h3>🎒 我的道具</h3>${inventory.map(x=>`<div class="itemcard"><b>${esc(x.config?.['名稱']||x.itemId)}</b> ×${x.quantity}<br><span class="small">${esc(x.config?.['類型']||'')}｜${esc(x.config?.['說明']||'')}</span></div>`).join('')||'<div class="itemcard">背包目前是空的。</div>'}`;}
 function renderChallengeHome(){const subjects=['國語','數學','英文','自然','社會'];panel.innerHTML=`<h3>⚔️ 寵物對戰挑戰</h3><p class="small">選擇科目與寵物。使用技能時會出題；答對造成完整傷害，答錯仍可造成 30% 傷害。每科累積答錯 3 次後鎖定到下一個早上 7:00。</p>${subjects.map(s=>{const st=state.challengeStatus?.[s]||{correct:0,wrong:0,locked:false};return `<div class="subjectcard"><b>${s}</b>　答對 ${st.correct}　<span class="lives">${'❤️'.repeat(Math.max(0,3-st.wrong))}${'🖤'.repeat(st.wrong)}</span><br><button class="btn ${st.locked?'gray':'blue'}" ${st.locked?'disabled':''} onclick="chooseChallenge('${s}')">${st.locked?'今日已結束':'進入對戰'}</button></div>`}).join('')}`;}
-function chooseChallenge(subject){challenge.subject=subject;panel.innerHTML=`<h3>⚔️ ${subject}對戰</h3><label>選擇出戰寵物</label><select id="chPet" class="full">${state.pets.map(p=>`<option value="${p.petId}">${esc(p.name)} Lv.${p.level}・第${p.stage}階</option>`).join('')}</select><div class="nav"><button class="btn blue" onclick="startChallengeUI()">開始戰鬥</button><button class="btn gray" onclick="renderChallengeHome()">返回</button></div>`;}
+function chooseChallenge(subject){challenge.subject=subject;switchMainMode('battle');renderBattleMain();panel.innerHTML=`<h3>⚔️ ${subject}對戰</h3><label>選擇出戰寵物</label><select id="chPet" class="full">${state.pets.map(p=>`<option value="${p.petId}">${esc(p.name)} Lv.${p.level}・第${p.stage}階</option>`).join('')}</select><div class="nav"><button class="btn blue" onclick="startChallengeUI()">開始戰鬥</button><button class="btn gray" onclick="renderChallengeHome()">返回</button></div>`;}
 function getPetSkills(pet){const cfg=PET_CONFIGS[String(pet.petId)]||{};const arr=Array.isArray(cfg.skills)?cfg.skills:[];return arr.filter(s=>Number(s.minStage||1)<=Number(pet.stage||1));}
 async function startChallengeUI(){
   challenge.petId=chPet.value;
@@ -411,22 +456,53 @@ async function startChallengeUI(){
     if(!r.ok&&r.locked){showLocked(r);return;}
     challenge.questions=r.questions||[];challenge.qIndex=0;challenge.status={...r.status};challenge.pending=[];challenge.seen=[];
     challenge.monsterNo=1;challenge.monsterMaxHp=100;challenge.monsterHp=100;challenge.selectedSkill=null;challenge.question=null;challenge.lastMsg='';
-    renderBattle();
+    switchMainMode('battle');renderBattleMain();renderBattle();
   }catch(e){alert(e.message||e);}
 }
 function renderBattle(){
   const pet=state.pets.find(p=>p.petId===challenge.petId);if(!pet)return;
+  renderBattleMain();
   const skills=getPetSkills(pet);
-  const mhp=Math.max(0,Number(challenge.monsterHp||0)),mmax=Number(challenge.monsterMaxHp||100);
-  panel.innerHTML=`<div class="battle"><div class="row"><b>${esc(challenge.subject)}對戰</b><span>答對 ${challenge.status.correct||0}</span><span class="lives">${'❤️'.repeat(Math.max(0,3-(challenge.status.wrong||0)))}${'🖤'.repeat(challenge.status.wrong||0)}</span></div>
-  <div class="battle-stage"><div class="fighter"><b>${esc(pet.name)}</b><div class="fighter-img">${getPetImage(pet.petId,pet.stage)?`<img src="${getPetImage(pet.petId,pet.stage)}">`:'🐾'}</div></div><div class="vs">VS</div><div class="fighter"><b>怪物 ${challenge.monsterNo}</b><div class="monster-placeholder">👾</div><div class="hpbar"><div style="width:${Math.max(0,mhp/mmax*100)}%"></div></div><small>HP ${Math.ceil(mhp)} / ${mmax}</small></div></div>
-  ${challenge.lastMsg?`<div style="text-align:center;margin:8px 0">${challenge.lastMsg}</div>`:''}
+  panel.innerHTML=`<h3>⚔️ ${esc(challenge.subject)}對戰控制</h3>
+  <div class="petcard"><b>${esc(pet.name)}</b> Lv.${pet.level}・第${pet.stage}階<br><span class="small">怪物 ${challenge.monsterNo}｜HP ${Math.ceil(challenge.monsterHp)} / ${challenge.monsterMaxHp}</span></div>
+  ${challenge.lastMsg?`<div style="margin:8px 0">${challenge.lastMsg}</div>`:''}
   <h4>選擇技能</h4><div class="skill-grid">${skills.map(s=>`<button class="btn purple skill-btn" onclick="useBattleSkill('${s.id}')"><b>${esc(s.icon||'✨')} ${esc(s.name)}</b><br><span class="small" style="color:white">威力 ${s.damage}</span></button>`).join('')}</div>
-  <div class="nav"><button class="btn gray" onclick="finishChallengeUI()">結束對戰</button></div></div>`;
+  <div class="nav"><button class="btn gray" onclick="finishChallengeUI()">結束對戰</button><button class="btn secondary" onclick="switchMainMode('home')">看一下小屋</button></div>`;
 }
 function useBattleSkill(skillId){const pet=state.pets.find(p=>p.petId===challenge.petId);const skill=getPetSkills(pet).find(s=>String(s.id)===String(skillId));if(!skill)return;challenge.selectedSkill=skill;if(!challenge.questions?.length || challenge.qIndex>=challenge.questions.length){loadMoreBattleQuestions();return;}challenge.question=challenge.questions[challenge.qIndex];renderBattleQuestion();}
-function renderBattleQuestion(){const q=challenge.question,skill=challenge.selectedSkill;if(!q||!skill){renderBattle();return;}let answer='';if(String(q.type).includes('填充'))answer=`<input id="fillAns" class="full" type="text" placeholder="輸入答案"><button class="btn blue" style="margin-top:8px" onclick="sendBattleAnswer(document.getElementById('fillAns').value)">送出</button>`;else if(String(q.type).includes('是非'))answer=`<div class="grid2"><button class="btn blue option" onclick="sendBattleAnswer('A')">⭕ 是</button><button class="btn red option" onclick="sendBattleAnswer('B')">❌ 否</button></div>`;else answer=q.options.map((o,i)=>`<button class="btn option blue" onclick="sendBattleAnswer('${String.fromCharCode(65+i)}')">${String.fromCharCode(65+i)}. ${esc(o)}</button>`).join('');panel.innerHTML=`<div class="question-overlay"><div class="row"><b>${esc(skill.icon||'✨')} ${esc(skill.name)}</b><span>威力 ${skill.damage}</span></div><div class="qtext">${esc(q.text)}</div>${answer}<button class="btn gray" style="margin-top:8px" onclick="renderBattle()">取消技能</button></div>`;}
-async function sendBattleAnswer(ans){const q=challenge.question,skill=challenge.selectedSkill;if(!q||!skill)return;const good=normAns(ans)===normAns(q.answer);let gained=0;if(good){challenge.status.correct=Number(challenge.status.correct||0)+1;gained=challengeLocalExp(challenge.status.correct);challenge.status.exp=Number(challenge.status.exp||0)+gained;}else challenge.status.wrong=Number(challenge.status.wrong||0)+1;const damage=Math.max(1,Math.round(Number(skill.damage||0)*(good?1:.3)));challenge.monsterHp=Math.max(0,Number(challenge.monsterHp||0)-damage);challenge.pending.push({questionId:q.id,answer:ans});challenge.seen.push(q.id);challenge.qIndex++;challenge.lastMsg=good?`<span class="success">✅ 正確！${esc(skill.name)}造成 <span class="damage-pop">${damage}</span> 傷害，+${gained} EXP</span>`:`<span class="wrong">❌ 答錯，只造成 30% 傷害：<span class="damage-pop">${damage}</span><br>正確答案：${esc(q.answer)} ${esc(q.explanation||'')}</span>`;challenge.question=null;challenge.selectedSkill=null;if(challenge.status.wrong>=3){await flushChallengeAnswers(true);panel.innerHTML=`<div class="qbox"><h3>今日對戰結束</h3>${challenge.lastMsg}<p>答對：${challenge.status.correct} 題</p><p>明早 7:00 後重置。</p><button class="btn gray" onclick="refreshState().then(()=>renderChallengeHome())">返回</button></div>`;return;}if(challenge.monsterHp<=0){challenge.monsterNo++;challenge.monsterMaxHp=100+(challenge.monsterNo-1)*25;challenge.monsterHp=challenge.monsterMaxHp;challenge.lastMsg+=`<br><span class="success">🏆 擊敗怪物！下一隻怪物出現。</span>`;}if(challenge.pending.length>=5)flushChallengeAnswers(false);renderBattle();}
+function renderBattleQuestion(){switchMainMode('battle');renderBattleMain();const q=challenge.question,skill=challenge.selectedSkill;if(!q||!skill){renderBattle();return;}let answer='';if(String(q.type).includes('填充'))answer=`<input id="fillAns" class="full" type="text" placeholder="輸入答案"><button class="btn blue" style="margin-top:8px" onclick="sendBattleAnswer(document.getElementById('fillAns').value)">送出</button>`;else if(String(q.type).includes('是非'))answer=`<div class="grid2"><button class="btn blue option" onclick="sendBattleAnswer('A')">⭕ 是</button><button class="btn red option" onclick="sendBattleAnswer('B')">❌ 否</button></div>`;else answer=q.options.map((o,i)=>`<button class="btn option blue" onclick="sendBattleAnswer('${String.fromCharCode(65+i)}')">${String.fromCharCode(65+i)}. ${esc(o)}</button>`).join('');panel.innerHTML=`<div class="question-overlay"><div class="row"><b>${esc(skill.icon||'✨')} ${esc(skill.name)}</b><span>威力 ${skill.damage}</span></div><div class="qtext">${esc(q.text)}</div>${answer}<button class="btn gray" style="margin-top:8px" onclick="renderBattle()">取消技能</button></div>`;}
+async function sendBattleAnswer(ans){
+  const q=challenge.question,skill=challenge.selectedSkill;if(!q||!skill)return;
+  const good=normAns(ans)===normAns(q.answer);
+  let gained=0;
+  if(good){challenge.status.correct=Number(challenge.status.correct||0)+1;gained=challengeLocalExp(challenge.status.correct);challenge.status.exp=Number(challenge.status.exp||0)+gained;}
+  else challenge.status.wrong=Number(challenge.status.wrong||0)+1;
+
+  const damage=Math.max(1,Math.round(Number(skill.damage||0)*(good?1:.3)));
+  challenge.pending.push({questionId:q.id,answer:ans});challenge.seen.push(q.id);challenge.qIndex++;
+  challenge.lastMsg=good?`<span class="success">✅ 正確！${esc(skill.name)}造成 <span class="damage-pop">${damage}</span> 傷害，+${gained} EXP</span>`:`<span class="wrong">❌ 答錯，只造成 30% 傷害：<span class="damage-pop">${damage}</span><br>正確答案：${esc(q.answer)} ${esc(q.explanation||'')}</span>`;
+  challenge.question=null;challenge.selectedSkill=null;
+
+  // 先播放寵物向怪物撞擊的動畫，再扣血。
+  await playPetAttackAnimation(damage);
+  challenge.monsterHp=Math.max(0,Number(challenge.monsterHp||0)-damage);
+
+  if(challenge.status.wrong>=3){
+    renderBattleMain();
+    await flushChallengeAnswers(true);
+    panel.innerHTML=`<div class="qbox"><h3>今日對戰結束</h3>${challenge.lastMsg}<p>答對：${challenge.status.correct} 題</p><p>明早 7:00 後重置。</p><button class="btn gray" onclick="refreshState().then(()=>{renderChallengeHome();renderBattleMain();})">返回</button></div>`;
+    return;
+  }
+
+  if(challenge.monsterHp<=0){
+    challenge.lastMsg+=`<br><span class="success">🏆 擊敗怪物！下一隻怪物出現。</span>`;
+    challenge.monsterNo++;
+    challenge.monsterMaxHp=100+(challenge.monsterNo-1)*25;
+    challenge.monsterHp=challenge.monsterMaxHp;
+  }
+  if(challenge.pending.length>=5)flushChallengeAnswers(false);
+  renderBattleMain();renderBattle();
+}
 async function loadMoreBattleQuestions(){try{await flushChallengeAnswers(true);const qs=await gs('getChallengeQuestionBatch',challenge.subject,challenge.seen.slice(-50),30);challenge.questions=qs||[];challenge.qIndex=0;if(!challenge.questions.length)throw new Error('沒有可用題目');challenge.question=challenge.questions[0];renderBattleQuestion();}catch(e){alert(e.message||e);}}
 function challengeLocalExp(n){if(n>=50)return 6;if(n>=40)return 5;if(n>=30)return 4;if(n>=20)return 3;if(n>=10)return 2;return 1;}
 function normAns(v){return String(v??'').trim().toUpperCase().replace(/\s+/g,'');}
@@ -457,7 +533,7 @@ async function flushChallengeAnswers(force){
 async function loadMoreChallengeQuestions(){
   try{await flushChallengeAnswers(true);const qs=await gs('getChallengeQuestionBatch',challenge.subject,challenge.seen.slice(-50),30);challenge.questions=qs||[];challenge.qIndex=0;challenge.question=challenge.questions[0]||null;renderQuestion(challenge.status);}catch(e){alert(e.message||e);}
 }
-async function finishChallengeUI(){try{await flushChallengeAnswers(true);await refreshState();currentTab='challenge';renderChallengeHome();}catch(e){alert(e.message||e);}}
+async function finishChallengeUI(){try{await flushChallengeAnswers(true);await refreshState();currentTab='challenge';switchMainMode('battle');challenge.subject='';challenge.petId='';renderBattleMain();renderChallengeHome();}catch(e){alert(e.message||e);}}
 function showLocked(r){panel.innerHTML=`<div class="qbox"><h3>今天這科已挑戰結束</h3><p>明早 7:00 後會重新有 3 次機會。</p><p>重置：${esc(r.resetAt)}</p><button class="btn gray" onclick="renderChallengeHome()">返回</button></div>`;}
 async function renderMail(){
   // 有快取就立刻畫出來，不等待 Apps Script。
@@ -532,16 +608,59 @@ function hidePurchaseBusy(){
   document.getElementById('purchaseBusyOverlay')?.classList.add('hidden');
 }
 
+
+function inventoryQty(itemId){
+  const row=(inventory||[]).find(x=>String(x.itemId)===String(itemId));
+  return Number(row?.quantity||0);
+}
+function backgroundAcquireInfo(bg){
+  const method=String(bg['取得方式']||bg.acquireType||'金幣').trim();
+  const itemId=String(bg['兌換道具ID']||bg.exchangeItemId||'').trim();
+  const qty=Number(bg['兌換數量']||bg.exchangeQty||0);
+  const itemName=String(bg['兌換道具名稱']||bg.exchangeItemName||itemId);
+  return {method,itemId,qty,itemName};
+}
+async function redeemBackgroundUI(id){
+  const bg=getLandShopRows().find(x=>String(x['土地ID'])===String(id));if(!bg)return;
+  const ex=backgroundAcquireInfo(bg);
+  if(!ex.itemId||ex.qty<=0){alert('這張背景尚未設定兌換寶物與數量。');return;}
+  if(inventoryQty(ex.itemId)<ex.qty){alert(`寶物不足，需要 ${ex.itemName} ×${ex.qty}`);return;}
+  if(!confirm(`使用 ${ex.itemName} ×${ex.qty} 兌換「${bg['名稱']}」嗎？`))return;
+  beginPurchaseBusy('兌換中');
+  try{
+    const r=await gs('redeemBackgroundFast',currentId,id);
+    state.backgrounds=Array.isArray(r.backgrounds)?r.backgrounds:state.backgrounds;
+    inventory=Array.isArray(r.inventory)?r.inventory:inventory;
+    CLIENT_CACHE.inventory=inventory;CLIENT_CACHE.inventoryAt=Date.now();saveLocal('inventory',inventory);
+    await renderShop();
+  }catch(e){alert(e.message||e);}
+  finally{endPurchaseBusy();}
+}
+
 async function renderShop(){
+  if(!Array.isArray(inventory))inventory=[];
+  if(!inventory.length){
+    try{inventory=await gs('getInventory',currentId);}catch(e){}
+  }
   const ownedBg=new Set((state.backgrounds||[]).map(String));
-  const activePlot=state.lands.find(l=>String(l['土地ID'])===String(state.activeLandId));
-  panel.innerHTML=`<h3>🛒 土地與背景</h3>
-  <div class="row" style="justify-content:flex-end"><button class="btn gray" onclick="refreshLiveLandCatalog(true)">↻ 更新背景資料</button></div><div class="home-section"><h4>➕ 購買土地</h4><p>每購買一次增加 1 格土地。</p><p><b>價格：🪙 2000</b></p><button class="btn secondary" onclick="buyPlotUI()">購買 +1 土地</button></div>
-  <h4>🖼️ 背景商店</h4><div class="shop-grid">${getLandShopRows().map(bg=>{
-    const id=String(bg['土地ID']);
-    const owned=ownedBg.has(id);
-    const using=String(activePlot?.backgroundId)===id;
-    return `<div class="itemcard"><b>${esc(bg['名稱'])}</b><div class="bg-thumb" style="background-image:url('${esc(bg['背景圖片'])}')"></div><span>🪙 ${Number(bg['價格']||0)}</span><br>${owned?`<button class="btn ${using?'gray':'blue'}" ${using?'disabled':''} onclick="useBackgroundFromShop('${id}')">${using?'目前使用中':'套用到目前土地'}</button>`:`<button class="btn blue" onclick="buyBackgroundUI('${id}')">購買背景</button>`}</div>`;
+  const activePlot=state.lands.find(x=>String(x['土地ID'])===String(state.activeLandId))||state.lands[0];
+  const rows=getLandShopRows();
+  panel.innerHTML=`<h3>🛒 土地／背景</h3>
+  <div class="row" style="justify-content:flex-end"><button class="btn gray" onclick="refreshLiveLandCatalog(true)">↻ 更新背景資料</button></div>
+  <div class="home-section"><h4>➕ 購買土地</h4><p>每增加 1 格土地：🪙 2000</p><button class="btn" onclick="buyPlotUI()">購買 1 格土地</button></div>
+  <h4>🖼️ 背景商店</h4><div class="shop-grid">${rows.map(bg=>{
+    const id=String(bg['土地ID']),owned=ownedBg.has(id),using=String(activePlot?.backgroundId)===id;
+    const ex=backgroundAcquireInfo(bg);
+    const treasure=(ex.method.includes('寶物')||ex.method.includes('兌換')) && ex.itemId && ex.qty>0;
+    const have=treasure?inventoryQty(ex.itemId):0;
+    const costLine=treasure
+      ? `<span class="exchange-tag">🎁 ${esc(ex.itemName)} ×${ex.qty}</span><br><span class="${have>=ex.qty?'item-count-ok':'item-count-low'}">目前持有 ${have}</span>`
+      : `<span>🪙 ${Number(bg['價格']||0)}</span>`;
+    let action='';
+    if(owned) action=`<button class="btn ${using?'gray':'blue'}" ${using?'disabled':''} onclick="useBackgroundFromShop('${id}')">${using?'目前使用中':'套用到目前土地'}</button>`;
+    else if(treasure) action=`<button class="btn purple" ${have<ex.qty?'disabled':''} onclick="redeemBackgroundUI('${id}')">兌換背景</button>`;
+    else action=`<button class="btn blue" onclick="buyBackgroundUI('${id}')">購買背景</button>`;
+    return `<div class="itemcard"><b>${esc(bg['名稱'])}</b><div class="bg-thumb" style="background-image:url('${esc(bg['背景圖片'])}')"></div>${costLine}<br>${action}</div>`;
   }).join('')}</div>`;
 }
 async function buyPlotUI(){
@@ -580,7 +699,7 @@ async function useBackgroundFromShop(id){
   }
 }
 function logout(){
-  currentId='';state=null;inventory=[];mailbox=[];shop=null;mailboxLoaded=false;mailboxAt=0;adminPassword='';sessionStorage.removeItem('petHouseAdminPassword');
+  currentId='';state=null;mainMode='home';inventory=[];mailbox=[];shop=null;mailboxLoaded=false;mailboxAt=0;adminPassword='';sessionStorage.removeItem('petHouseAdminPassword');
   if(wanderTimer)clearInterval(wanderTimer);
   if(backgroundMailTimer)clearInterval(backgroundMailTimer);
   studentView.classList.add('hidden');adminView.classList.add('hidden');loginView.classList.remove('hidden');
