@@ -1,0 +1,9 @@
+[
+  {
+    "bgId": "BATTLE001",
+    "name": "小巨人領地",
+    "image": "assets/battle-backgrounds/BATTLE001.png",
+    "subject": "全部",
+    "enabled": true
+  }
+]

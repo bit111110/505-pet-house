@@ -1,4 +1,4 @@
-const FRONTEND_BUILD='20261005-2145';
+const FRONTEND_BUILD='20261005-2215';
 const BUILTIN_LAND_BACKGROUNDS = {
   'LAND001': 'assets/maps/grassland.png',
   'LAND002': 'assets/maps/forest.png',
@@ -17,30 +17,108 @@ let MONSTER_CONFIGS = {};
 let MONSTER_LIST = [];
 let BATTLE_BG_LIST = [];
 let PET_BATTLE_CONFIGS = {};
+let ITEM_CONFIGS = {};
+let STATIC_CATALOGS_READY=false;
+let STATIC_CATALOGS_AT=0;
 
-async function loadStaticGameData(){
+const STATIC_CATALOG_CACHE_KEY='petHouseStaticCatalogsV597';
+const STATIC_CATALOG_CACHE_MS=30*60*1000;
+
+function readStaticCatalogCache(){
   try{
-    const [pets,lands]=await Promise.all([
-      fetch('data/pets.json?v=' + FRONTEND_BUILD,{cache:'force-cache'}).then(r=>{
-        if(!r.ok)throw new Error('pets.json '+r.status);
-        return r.json();
-      }),
-      fetch('data/lands.json?v=' + FRONTEND_BUILD,{cache:'force-cache'}).then(r=>{
-        if(!r.ok)throw new Error('lands.json '+r.status);
-        return r.json();
-      })
+    const x=JSON.parse(localStorage.getItem(STATIC_CATALOG_CACHE_KEY)||'null');
+    if(!x||!x.data)return null;
+    return x;
+  }catch(e){return null;}
+}
+function saveStaticCatalogCache(data){
+  try{localStorage.setItem(STATIC_CATALOG_CACHE_KEY,JSON.stringify({at:Date.now(),data}));}catch(e){}
+}
+function applyStaticCatalogBundle(data){
+  if(!data||typeof data!=='object')return;
+  if(Array.isArray(data.monsters)&&data.monsters.length){
+    MONSTER_LIST=data.monsters;
+    MONSTER_CONFIGS=Object.fromEntries(MONSTER_LIST.map(m=>[String(m.monsterId),m]));
+  }
+  if(Array.isArray(data.battleBackgrounds)&&data.battleBackgrounds.length){
+    BATTLE_BG_LIST=data.battleBackgrounds;
+  }
+  if(Array.isArray(data.petBattleConfigs)&&data.petBattleConfigs.length){
+    PET_BATTLE_CONFIGS=Object.fromEntries(data.petBattleConfigs.map(x=>[String(x.petId),x]));
+  }
+  if(Array.isArray(data.items)&&data.items.length){
+    ITEM_CONFIGS=Object.fromEntries(data.items.map(x=>[String(x.itemId||x['道具ID']),x]));
+  }
+  if(Array.isArray(data.backgrounds)&&data.backgrounds.length){
+    LIVE_LAND_CONFIGS=Object.fromEntries(data.backgrounds.map(x=>[String(x.landId),x]));
+    liveLandCatalogAt=Date.now();
+  }
+  STATIC_CATALOGS_READY=true;
+  STATIC_CATALOGS_AT=Date.now();
+}
+async function fetchOptionalJson(path){
+  try{
+    const r=await fetch(path+'?v='+FRONTEND_BUILD,{cache:'force-cache'});
+    if(!r.ok)return null;
+    const j=await r.json();
+    return Array.isArray(j)?j:null;
+  }catch(e){return null;}
+}
+async function loadStaticGameData(){
+  // 先吃瀏覽器快取，舊學生再次登入時不必等 Apps Script。
+  const cached=readStaticCatalogCache();
+  if(cached?.data)applyStaticCatalogBundle(cached.data);
+
+  try{
+    const [petsR,landsR,monstersR,bgR,itemsR,pbR]=await Promise.all([
+      fetch('data/pets.json?v='+FRONTEND_BUILD,{cache:'force-cache'}),
+      fetch('data/lands.json?v='+FRONTEND_BUILD,{cache:'force-cache'}),
+      fetchOptionalJson('data/monsters.json'),
+      fetchOptionalJson('data/battle-backgrounds.json'),
+      fetchOptionalJson('data/items.json'),
+      fetchOptionalJson('data/pet-battle.json')
     ]);
+    if(!petsR.ok)throw new Error('pets.json '+petsR.status);
+    if(!landsR.ok)throw new Error('lands.json '+landsR.status);
+    const pets=await petsR.json(),lands=await landsR.json();
     STATIC_PETS=Array.isArray(pets)?pets:[];
     STATIC_LANDS=Array.isArray(lands)?lands:[];
     PET_CONFIGS=Object.fromEntries(STATIC_PETS.map(p=>[String(p.petId),p]));
     LAND_CONFIGS=Object.fromEntries(STATIC_LANDS.map(l=>[String(l.landId),l]));
+
+    // GitHub JSON 有內容才覆蓋；空檔會自動保留 Apps Script / localStorage fallback。
+    applyStaticCatalogBundle({
+      monsters:Array.isArray(monstersR)&&monstersR.length?monstersR:undefined,
+      battleBackgrounds:Array.isArray(bgR)&&bgR.length?bgR:undefined,
+      items:Array.isArray(itemsR)&&itemsR.length?itemsR:undefined,
+      petBattleConfigs:Array.isArray(pbR)&&pbR.length?pbR:undefined
+    });
     return true;
   }catch(err){
-    console.warn('GitHub 固定資料載入失敗，改用 Apps Script 回傳資料。',err);
-    PET_CONFIGS={}; LAND_CONFIGS={}; STATIC_PETS=[]; STATIC_LANDS=[];
-    return false;
+    console.warn('GitHub 固定資料載入失敗，使用瀏覽器快取或 Apps Script。',err);
+    return !!cached;
   }
 }
+async function refreshStaticCatalogsV597(force=false){
+  const cached=readStaticCatalogCache();
+  const fresh=cached && (Date.now()-Number(cached.at||0)<STATIC_CATALOG_CACHE_MS);
+  if(!force && fresh){
+    applyStaticCatalogBundle(cached.data);
+    return cached.data;
+  }
+  try{
+    const data=await gsRaw('getStaticCatalogBundleV597');
+    if(data){
+      applyStaticCatalogBundle(data);
+      saveStaticCatalogCache(data);
+    }
+    return data;
+  }catch(e){
+    console.warn('共用設定背景更新失敗',e);
+    return cached?.data||null;
+  }
+}
+
 const STATIC_DATA_READY=loadStaticGameData();
 
 function getPetImage(petId,stage){
@@ -255,13 +333,13 @@ async function hydrateAfterLoginV596(){
         const r=bundle.runtime;
         if(Array.isArray(r.mailbox)){mailbox=r.mailbox;mailboxLoaded=true;mailboxAt=Date.now();saveLocal('mailbox',mailbox);}
         if(Array.isArray(r.inventory)){inventory=r.inventory;CLIENT_CACHE.inventory=r;CLIENT_CACHE.inventoryAt=Date.now();saveLocal('inventory',r);}
-        if(Array.isArray(r.backgrounds)){LIVE_LAND_CONFIGS=Object.fromEntries(r.backgrounds.map(x=>[String(x.landId),x]));liveLandCatalogAt=Date.now();saveLocal('landCatalog',r.backgrounds);}
-        if(Array.isArray(r.monsters)){MONSTER_LIST=r.monsters;MONSTER_CONFIGS=Object.fromEntries(MONSTER_LIST.map(m=>[String(m.monsterId),m]));}
-        if(Array.isArray(r.battleBackgrounds))BATTLE_BG_LIST=r.battleBackgrounds;
-        if(Array.isArray(r.petBattleConfigs))PET_BATTLE_CONFIGS=Object.fromEntries(r.petBattleConfigs.map(x=>[String(x.petId),x]));
+        // 共用設定 V5.9.7 改由 GitHub JSON / localStorage / 單一靜態 API 背景更新。
         if(state){state.unreadMail=Number(r.unreadMail||0);mailBadge.textContent=state.unreadMail;mailBadge.classList.toggle('hidden',!state.unreadMail);}
       }
       if(state && bundle?.challengeStatus)state.challengeStatus=bundle.challengeStatus;
+
+      // 共用設定不阻塞登入；背景靜默更新並寫入 localStorage，之後登入會更快。
+      refreshStaticCatalogsV597(false);
 
       // 題庫改成「單科、分次」預載，避免一次回傳五科造成 Apps Script 回傳過大。
       (async()=>{
@@ -502,17 +580,21 @@ function normalizeMapUrlFast(url){
 
 
 async function loadMonsterCatalog(){
-  try{
-    const rows=await gs('getMonsterCatalogFresh');
-    MONSTER_LIST=Array.isArray(rows)?rows:[];
-    MONSTER_CONFIGS=Object.fromEntries(MONSTER_LIST.map(m=>[String(m.monsterId),m]));
+  if(MONSTER_LIST.length)return MONSTER_LIST;
+  const cached=readStaticCatalogCache();
+  if(cached?.data?.monsters?.length){
+    applyStaticCatalogBundle(cached.data);
     return MONSTER_LIST;
+  }
+  try{
+    const data=await refreshStaticCatalogsV597(true);
+    return Array.isArray(data?.monsters)?data.monsters:MONSTER_LIST;
   }catch(e){
     console.warn('怪物設定載入失敗',e);
-    MONSTER_LIST=[];MONSTER_CONFIGS={};
-    return [];
+    return MONSTER_LIST;
   }
 }
+
 function getAvailableMonsters(subject){
   const s=String(subject||'');
   return MONSTER_LIST.filter(m=>{
