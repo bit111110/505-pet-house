@@ -1,4 +1,4 @@
-const FRONTEND_BUILD='20261004-2320';
+const FRONTEND_BUILD='20261005-1745';
 const BUILTIN_LAND_BACKGROUNDS = {
   'LAND001': 'assets/maps/grassland.png',
   'LAND002': 'assets/maps/forest.png',
@@ -618,7 +618,36 @@ function renderBattle(){
   <div class="nav"><button class="btn gray" onclick="finishChallengeUI()">結束對戰</button><button class="btn secondary" onclick="switchMainMode('home')">看一下小屋</button></div>`;
 }
 function useBattleSkill(skillId){const pet=state.pets.find(p=>p.petId===challenge.petId);const skill=getConfiguredPetSkills(pet).find(s=>String(s.id)===String(skillId));if(!skill)return;challenge.selectedSkill=skill;if(!challenge.questions?.length || challenge.qIndex>=challenge.questions.length){loadMoreBattleQuestions();return;}challenge.question=challenge.questions[challenge.qIndex];renderBattleQuestion();}
-function renderBattleQuestion(){switchMainMode('battle');renderBattleMain();const q=challenge.question,skill=challenge.selectedSkill;if(!q||!skill){renderBattle();return;}let answer='';if(String(q.type).includes('填充'))answer=`<input id="fillAns" class="full" type="text" placeholder="輸入答案"><button class="btn blue" style="margin-top:8px" onclick="sendBattleAnswer(document.getElementById('fillAns').value)">送出</button>`;else if(String(q.type).includes('是非'))answer=`<div class="grid2"><button class="btn blue option" onclick="sendBattleAnswer('A')">⭕ 是</button><button class="btn red option" onclick="sendBattleAnswer('B')">❌ 否</button></div>`;else answer=q.options.map((o,i)=>`<button class="btn option blue" onclick="sendBattleAnswer('${String.fromCharCode(65+i)}')">${String.fromCharCode(65+i)}. ${esc(o)}</button>`).join('');panel.innerHTML=`<div class="question-overlay"><div class="row"><b>${esc(skill.icon||'✨')} ${esc(skill.name)}</b><span>威力 ${skill.damage}</span></div><div class="qtext">${esc(q.text)}</div>${answer}<button class="btn gray" style="margin-top:8px" onclick="renderBattle()">取消技能</button></div>`;}
+
+function questionImageHtml(q){
+  const src=String(q?.image||q?.imagePath||'').trim().replace(/\\/g,'/');
+  if(!src)return '';
+  return `<div class="question-image-wrap"><img class="question-image" src="${esc(src)}" alt="題目圖片" onerror="this.parentElement.style.display='none'"></div>`;
+}
+
+function renderBattleQuestion(){
+  switchMainMode('battle');
+  renderBattleMain();
+  const q=challenge.question,skill=challenge.selectedSkill;
+  if(!q||!skill){renderBattle();return;}
+
+  let answer='';
+  if(String(q.type).includes('填充')){
+    answer=`<input id="fillAns" class="full" type="text" placeholder="輸入答案"><button class="btn blue" style="margin-top:8px" onclick="sendBattleAnswer(document.getElementById('fillAns').value)">送出</button>`;
+  }else if(String(q.type).includes('是非')){
+    answer=`<div class="grid2"><button class="btn blue option" onclick="sendBattleAnswer('A')">⭕ 是</button><button class="btn red option" onclick="sendBattleAnswer('B')">❌ 否</button></div>`;
+  }else{
+    answer=(q.options||[]).map((o,i)=>`<button class="btn option blue" onclick="sendBattleAnswer('${String.fromCharCode(65+i)}')">${String.fromCharCode(65+i)}. ${esc(o)}</button>`).join('');
+  }
+
+  panel.innerHTML=`<div class="question-overlay">
+    <div class="row"><b>${esc(skill.icon||'✨')} ${esc(skill.name)}</b><span>威力 ${skill.damage}</span></div>
+    <div class="qtext">${esc(q.text)}</div>
+    ${questionImageHtml(q)}
+    ${answer}
+    <button class="btn gray" style="margin-top:8px" onclick="renderBattle()">取消技能</button>
+  </div>`;
+}
 async function sendBattleAnswer(ans){
   const q=challenge.question,skill=challenge.selectedSkill;if(!q||!skill)return;
   const good=normAns(ans)===normAns(q.answer);
