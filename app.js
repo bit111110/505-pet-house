@@ -1,4 +1,4 @@
-const FRONTEND_BUILD='20261005-2215';
+const FRONTEND_BUILD='20261005-2315';
 const BUILTIN_LAND_BACKGROUNDS = {
   'LAND001': 'assets/maps/grassland.png',
   'LAND002': 'assets/maps/forest.png',
@@ -21,8 +21,8 @@ let ITEM_CONFIGS = {};
 let STATIC_CATALOGS_READY=false;
 let STATIC_CATALOGS_AT=0;
 
-const STATIC_CATALOG_CACHE_KEY='petHouseStaticCatalogsV597';
-const STATIC_CATALOG_CACHE_MS=30*60*1000;
+const STATIC_CATALOG_CACHE_KEY='petHouseStaticCatalogsV598';
+const STATIC_CATALOG_CACHE_MS=6*60*60*1000;
 
 function readStaticCatalogCache(){
   try{
@@ -36,6 +36,14 @@ function saveStaticCatalogCache(data){
 }
 function applyStaticCatalogBundle(data){
   if(!data||typeof data!=='object')return;
+  if(Array.isArray(data.pets)&&data.pets.length){
+    STATIC_PETS=data.pets;
+    PET_CONFIGS=Object.fromEntries(STATIC_PETS.map(p=>[String(p.petId),p]));
+  }
+  if(Array.isArray(data.lands)&&data.lands.length){
+    STATIC_LANDS=data.lands;
+    LAND_CONFIGS=Object.fromEntries(STATIC_LANDS.map(l=>[String(l.landId),l]));
+  }
   if(Array.isArray(data.monsters)&&data.monsters.length){
     MONSTER_LIST=data.monsters;
     MONSTER_CONFIGS=Object.fromEntries(MONSTER_LIST.map(m=>[String(m.monsterId),m]));
@@ -65,41 +73,17 @@ async function fetchOptionalJson(path){
   }catch(e){return null;}
 }
 async function loadStaticGameData(){
-  // 先吃瀏覽器快取，舊學生再次登入時不必等 Apps Script。
+  // V5.9.8：Google 試算表是唯一設定來源。
+  // 開頁面先用上次儲存在瀏覽器的快取，完全不阻塞登入。
   const cached=readStaticCatalogCache();
-  if(cached?.data)applyStaticCatalogBundle(cached.data);
-
-  try{
-    const [petsR,landsR,monstersR,bgR,itemsR,pbR]=await Promise.all([
-      fetch('data/pets.json?v='+FRONTEND_BUILD,{cache:'force-cache'}),
-      fetch('data/lands.json?v='+FRONTEND_BUILD,{cache:'force-cache'}),
-      fetchOptionalJson('data/monsters.json'),
-      fetchOptionalJson('data/battle-backgrounds.json'),
-      fetchOptionalJson('data/items.json'),
-      fetchOptionalJson('data/pet-battle.json')
-    ]);
-    if(!petsR.ok)throw new Error('pets.json '+petsR.status);
-    if(!landsR.ok)throw new Error('lands.json '+landsR.status);
-    const pets=await petsR.json(),lands=await landsR.json();
-    STATIC_PETS=Array.isArray(pets)?pets:[];
-    STATIC_LANDS=Array.isArray(lands)?lands:[];
-    PET_CONFIGS=Object.fromEntries(STATIC_PETS.map(p=>[String(p.petId),p]));
-    LAND_CONFIGS=Object.fromEntries(STATIC_LANDS.map(l=>[String(l.landId),l]));
-
-    // GitHub JSON 有內容才覆蓋；空檔會自動保留 Apps Script / localStorage fallback。
-    applyStaticCatalogBundle({
-      monsters:Array.isArray(monstersR)&&monstersR.length?monstersR:undefined,
-      battleBackgrounds:Array.isArray(bgR)&&bgR.length?bgR:undefined,
-      items:Array.isArray(itemsR)&&itemsR.length?itemsR:undefined,
-      petBattleConfigs:Array.isArray(pbR)&&pbR.length?pbR:undefined
-    });
+  if(cached?.data){
+    applyStaticCatalogBundle(cached.data);
     return true;
-  }catch(err){
-    console.warn('GitHub 固定資料載入失敗，使用瀏覽器快取或 Apps Script。',err);
-    return !!cached;
   }
+  return false;
 }
-async function refreshStaticCatalogsV597(force=false){
+
+async function refreshStaticCatalogsV598(force=false){
   const cached=readStaticCatalogCache();
   const fresh=cached && (Date.now()-Number(cached.at||0)<STATIC_CATALOG_CACHE_MS);
   if(!force && fresh){
@@ -107,7 +91,7 @@ async function refreshStaticCatalogsV597(force=false){
     return cached.data;
   }
   try{
-    const data=await gsRaw('getStaticCatalogBundleV597');
+    const data=await gsRaw('getStaticCatalogBundleV598');
     if(data){
       applyStaticCatalogBundle(data);
       saveStaticCatalogCache(data);
@@ -338,8 +322,8 @@ async function hydrateAfterLoginV596(){
       }
       if(state && bundle?.challengeStatus)state.challengeStatus=bundle.challengeStatus;
 
-      // 共用設定不阻塞登入；背景靜默更新並寫入 localStorage，之後登入會更快。
-      refreshStaticCatalogsV597(false);
+      // 共用設定以試算表為唯一來源；登入後靜默更新快取，不阻塞學生。
+      refreshStaticCatalogsV598(false);
 
       // 題庫改成「單科、分次」預載，避免一次回傳五科造成 Apps Script 回傳過大。
       (async()=>{
@@ -397,7 +381,8 @@ function waitingLabelFor(fn){
     getInventory:'載入背包中...',
     feedExpFastV55:'升級寵物中...',
     getMonsterCatalogFast:'載入怪物資料中...',
-    getBattleBackgroundCatalogFast:'載入戰鬥背景中...'
+    getBattleBackgroundCatalogFast:'載入戰鬥背景中...',
+    adminRefreshGameConfigV598:'更新遊戲設定中...'
   };
   return map[fn]||'等待中...';
 }
@@ -587,7 +572,7 @@ async function loadMonsterCatalog(){
     return MONSTER_LIST;
   }
   try{
-    const data=await refreshStaticCatalogsV597(true);
+    const data=await refreshStaticCatalogsV598(true);
     return Array.isArray(data?.monsters)?data.monsters:MONSTER_LIST;
   }catch(e){
     console.warn('怪物設定載入失敗',e);
@@ -1234,7 +1219,53 @@ function logout(){
 }
 let adminPassword=sessionStorage.getItem('petHouseAdminPassword')||'';
 async function openAdmin(){const pw=prompt('請輸入老師後台密碼：');if(!pw)return;try{await gs('adminLogin',pw);adminPassword=pw;sessionStorage.setItem('petHouseAdminPassword',pw);loginView.classList.add('hidden');adminView.classList.remove('hidden');await loadAdmin();}catch(e){alert('密碼錯誤或後台驗證失敗：'+(e.message||e));}}
-async function loadAdmin(){if(!adminPassword){logout();return;}adminData=await gs('getAdminDataSecure',adminPassword);const itemOpts=adminData.items.map(x=>`<option value="${x['道具ID']}">${esc(x['名稱'])}</option>`).join('');const petOpts=adminData.pets.map(x=>`<option value="${x.petId}">${esc(x.name)}</option>`).join('');adminArea.innerHTML=`<table class="admin-table"><thead><tr><th>座號</th><th>學生</th><th>金幣</th><th>發獎勵</th></tr></thead><tbody>${adminData.students.map(s=>`<tr><td>${s.seat||''}</td><td>${esc(s.name)}<br><span class="small">${esc(s.id)}</span></td><td>${s.coins}</td><td><div class="row"><button class="btn" onclick="adminCoin('${s.id}',10)">+10🪙</button><select id="it-${s.id}">${itemOpts}</select><input id="iq-${s.id}" type="number" min="1" value="1" style="width:65px"><button class="btn purple" onclick="adminItem('${s.id}')">發道具</button><select id="pt-${s.id}">${petOpts}</select><button class="btn secondary" onclick="adminPet('${s.id}')">發寵物</button></div></td></tr>`).join('')}</tbody></table>`;}
+async function loadAdmin(){
+  if(!adminPassword){logout();return;}
+  adminData=await gs('getAdminDataSecure',adminPassword);
+  const itemOpts=adminData.items.map(x=>`<option value="${x['道具ID']}">${esc(x['名稱'])}</option>`).join('');
+  const petOpts=adminData.pets.map(x=>`<option value="${x.petId}">${esc(x.name)}</option>`).join('');
+  adminArea.innerHTML=`
+    <div class="petcard" style="margin-bottom:12px">
+      <div class="row" style="justify-content:space-between;align-items:center">
+        <div>
+          <b>⚙️ 遊戲設定快取</b>
+          <div class="small">新增寵物、怪物、道具、背景或修改題庫後，按一次即可讓網站讀取最新試算表設定。</div>
+        </div>
+        <button class="btn blue" onclick="adminRefreshGameConfig()">🔄 更新遊戲設定</button>
+      </div>
+      <div id="admin-config-status" class="small" style="margin-top:8px"></div>
+    </div>
+    <table class="admin-table">
+      <thead><tr><th>座號</th><th>學生</th><th>金幣</th><th>發獎勵</th></tr></thead>
+      <tbody>${adminData.students.map(s=>`<tr>
+        <td>${s.seat||''}</td>
+        <td>${esc(s.name)}<br><span class="small">${esc(s.id)}</span></td>
+        <td>${s.coins}</td>
+        <td><div class="row">
+          <button class="btn" onclick="adminCoin('${s.id}',10)">+10🪙</button>
+          <select id="it-${s.id}">${itemOpts}</select>
+          <input id="iq-${s.id}" type="number" min="1" value="1" style="width:65px">
+          <button class="btn purple" onclick="adminItem('${s.id}')">發道具</button>
+          <select id="pt-${s.id}">${petOpts}</select>
+          <button class="btn secondary" onclick="adminPet('${s.id}')">發寵物</button>
+        </div></td>
+      </tr>`).join('')}</tbody>
+    </table>`;
+}
+async function adminRefreshGameConfig(){
+  try{
+    const data=await gs('adminRefreshGameConfigV598',adminPassword);
+    if(data?.catalog){
+      applyStaticCatalogBundle(data.catalog);
+      saveStaticCatalogCache(data.catalog);
+    }
+    const st=document.getElementById('admin-config-status');
+    if(st)st.innerHTML=`✅ 已更新：${esc(data?.updatedAt||'剛剛')}。之後學生會直接使用最新快取。`;
+    // 寵物/道具選單也要立刻反映新增內容。
+    await loadAdmin();
+  }catch(e){alert(e.message||e);}
+}
+
 async function adminCoin(id,n){await gs('adminAddCoins',adminPassword,id,n,'課堂獎勵');await loadAdmin();}
 async function adminItem(id){
   if(adminBusyItem.has(id))return;

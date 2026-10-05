@@ -1,78 +1,62 @@
-# V5.9.7 半靜態高速版
+# V5.9.8 試算表唯一來源 + 一鍵更新快取
 
-這版可以直接從 V5.9.6.2 更新。
+這版取代 V5.9.7 的「GitHub JSON 當主資料」做法。
 
-## 這次真正改的架構
+## 以後你怎麼新增東西？
 
-### GitHub 直接讀
-既有：
-- data/pets.json
-- data/lands.json
+### 新增寵物
+1. 圖片放 GitHub，例如：
+   - assets/pets/PET025_1.png
+   - assets/pets/PET025_2.png
+   - assets/pets/PET025_3.png
+2. 在 Google 試算表「寵物設定」新增 PET025。
+3. 老師後台按「🔄 更新遊戲設定」。
+4. 完成。
 
-新增：
-- data/battle-backgrounds.json
+### 新增怪物 / 道具 / 戰鬥背景 / 土地背景 / 專屬技能
+一樣：
+1. 圖片素材放 GitHub。
+2. 設定只改 Google 試算表。
+3. 老師後台按「更新遊戲設定」。
+
+不用再手動編 JSON。
+
+## 快取
+- Google Sheet 是唯一主資料。
+- Apps Script 共用設定快取：最長 6 小時。
+- 學生瀏覽器也會保存共用設定 6 小時。
+- 老師按「更新遊戲設定」後，會：
+  1. 清除舊 Apps Script 快取
+  2. 重新讀取 Google Sheet
+  3. 立即重建設定
+  4. 老師自己的瀏覽器也立即更新
+
+學生重新整理/再次登入後就會取得新設定。
+
+## GitHub JSON
+V5.9.7 建立的：
 - data/monsters.json
 - data/items.json
+- data/battle-backgrounds.json
 - data/pet-battle.json
 
-目前已幫你寫好：
-- BATTLE001 小巨人領地
+可以留著，不會再作為主設定來源；V5.9.8 的 app.js 不再讀它們。
 
-其他三個 JSON 先放空陣列 `[]`，不會覆蓋你的現有設定。
-網站會自動使用：
-1. GitHub JSON
-2. 瀏覽器 localStorage 快取
-3. Apps Script 靜態設定 API
-依序 fallback。
-
-所以不會因為 JSON 尚未填完整就把你的怪物、道具或技能弄掉。
-
-## 第二次登入會更快
-共用設定會存在瀏覽器 30 分鐘：
-- 怪物
-- 對戰背景
-- 寵物戰鬥設定
-- 道具設定
-- 土地背景設定
-
-下次登入先直接使用本機快取，不等 Google Sheet。
-
-## Apps Script 登入後 payload 也縮小
-`getPostLoginBundleV596` 不再每次夾帶：
-- 怪物
-- 背景
-- 對戰背景
-- 寵物戰鬥設定
-
-只保留學生個人資料：
-- 信箱
-- 未讀數
-- 背包
-
-共用設定另外背景更新，一次快取 30 分鐘。
-
-## 更新方式
-
+## 更新
 GitHub：
 - app.js
 - index.html
-- data/battle-backgrounds.json
-- data/monsters.json
-- data/items.json
-- data/pet-battle.json
-
-注意：你原本 repo 裡的 `data/pets.json`、`data/lands.json` 不要刪。
 
 Apps Script：
 - apps-script/Code.gs
 
 執行一次：
-`setupOrUpgradeV597()`
+`setupOrUpgradeV598()`
 
-然後建立新版本重新部署 Apps Script。
+建立新版本並重新部署 Apps Script。
 
 測試：
-https://bit111110.github.io/505-pet-house/?v=20261005-2215
+https://bit111110.github.io/505-pet-house/?v=20261005-2315
 
-更新成功後左上應顯示：
-V5.9.7 前端 20261005-2215
+更新成功後左上應看到：
+V5.9.8 前端 20261005-2315
