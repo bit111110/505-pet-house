@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#f5efe4">
 <title>505 班級寵物小屋</title>
 <link rel="preload" href="assets/maps/MAP001.webp" as="image">
-<link rel="stylesheet" href="style.css?v=20261005-2315">
+<link rel="stylesheet" href="style.css?v=20261005-2355">
 
 <style>
 .question-image-wrap{margin:10px 0 14px;text-align:center}
@@ -35,12 +35,29 @@
 .waiting-sub{margin-top:8px;font-size:13px;font-weight:500;color:#777}
 @keyframes waitingSpin{to{transform:rotate(360deg)}}
 </style>
+
+<style>
+.math-frac{display:inline-flex;flex-direction:column;align-items:center;justify-content:center;vertical-align:middle;line-height:1;margin:0 .12em;min-width:1.25em}
+.math-frac .num{display:block;padding:0 .16em .08em;border-bottom:1.8px solid currentColor}
+.math-frac .den{display:block;padding:.08em .16em 0}
+.pet-pos{touch-action:none}
+.pet-pos.dragging{z-index:50;transition:none!important;cursor:grabbing}
+.pet-pos.drag-fall{transition:top .45s cubic-bezier(.2,.8,.3,1.25),left .15s ease!important}
+.pet-pos{cursor:grab}
+#adminPasswordModal{position:fixed;inset:0;z-index:100000;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.45)}
+#adminPasswordModal.show{display:flex}
+.admin-password-card{width:min(360px,88vw);background:#fff;border-radius:18px;padding:22px;box-shadow:0 16px 45px rgba(0,0,0,.28)}
+.admin-password-card input{width:100%;box-sizing:border-box;font-size:20px;padding:10px 12px;margin:10px 0}
+.bulk-admin-card{margin:10px 0 14px;padding:12px;border:1px solid #ddd;border-radius:14px;background:#fafafa}
+.bulk-admin-card .row{gap:8px;flex-wrap:wrap}
+.batch-exp-toolbar{margin:10px 0;padding:10px;border:1px solid #ddd;border-radius:12px;background:#fafafa}
+</style>
 </head>
 <body>
-<div id="loginView" class="app"><div class="card login"><h1>🐾 班級寵物小屋 V5.9.8</h1><p>學號＋生日（月／日）登入</p><input id="sid" placeholder="學號，例如 50501"><input id="bday" type="text" inputmode="numeric" maxlength="5" placeholder="生日（月/日），例如 09/08"><div class="nav"><button class="btn" onclick="login()">登入</button><button class="btn gray" onclick="openAdmin()">老師後台</button></div><p id="loginMsg"></p></div></div>
+<div id="loginView" class="app"><div class="card login"><h1>🐾 班級寵物小屋 V5.9.9</h1><p>學號＋生日（月／日）登入</p><input id="sid" placeholder="學號，例如 50501"><input id="bday" type="text" inputmode="numeric" maxlength="5" placeholder="生日（月/日），例如 09/08"><div class="nav"><button class="btn" onclick="login()">登入</button><button class="btn gray" onclick="openAdmin()">老師後台</button></div><p id="loginMsg"></p></div></div>
 
 <div id="studentView" class="hidden">
-  <div class="top"><div><b id="studentName">學生</b> 的寵物小屋 <span class="small" id="ver"></span> <span class="small">前端 20261005-2315</span></div><div class="coins">🪙 <span id="coins">0</span></div></div>
+  <div class="top"><div><b id="studentName">學生</b> 的寵物小屋 <span class="small" id="ver"></span> <span class="small">前端 20261005-2355</span></div><div class="coins">🪙 <span id="coins">0</span></div></div>
   <div class="app layout">
     <div class="main-stage-wrap">
       <div class="main-mode-tabs">
@@ -74,14 +91,26 @@
     <div class="small">正在寫入資料，請不要重複點擊或切換頁面。</div>
   </div>
 </div>
-<script src="config.js?v=20261005-2315"></script>
-<script src="app.js?v=20261005-2315"></script>
+<script src="config.js?v=20261005-2355"></script>
+<script src="app.js?v=20261005-2355"></script>
 
 <div id="globalWaitingOverlay" aria-live="polite" aria-busy="true">
   <div class="waiting-card">
     <div class="waiting-spinner"></div>
     <div id="globalWaitingText">等待中...</div>
     <div class="waiting-sub">資料處理中，請稍候</div>
+  </div>
+</div>
+
+<div id="adminPasswordModal">
+  <div class="admin-password-card">
+    <h3 style="margin-top:0">🔐 老師後台</h3>
+    <div class="small">請輸入老師後台密碼</div>
+    <input id="adminPasswordInput" type="password" autocomplete="current-password" placeholder="密碼">
+    <div class="row" style="justify-content:flex-end">
+      <button class="btn gray" id="adminPasswordCancel">取消</button>
+      <button class="btn blue" id="adminPasswordOk">登入</button>
+    </div>
   </div>
 </div>
 </body>

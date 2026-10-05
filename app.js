@@ -1,4 +1,4 @@
-const FRONTEND_BUILD='20261005-2315';
+const FRONTEND_BUILD='20261005-2355';
 const BUILTIN_LAND_BACKGROUNDS = {
   'LAND001': 'assets/maps/grassland.png',
   'LAND002': 'assets/maps/forest.png',
@@ -245,6 +245,7 @@ const QUESTION_BANK_CACHE={};
 let POST_LOGIN_LOADING=null;
 let QUESTION_BANK_READY=false;
 let adminBusyItem=new Set();
+let DRAGGING_PET_ID='';
 
 function cacheFresh(ts,ms=300000){return Date.now()-ts<ms;}
 
@@ -428,6 +429,13 @@ async function gs(fn,...args){
 }
 
 function esc(v){return String(v??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#39;');}
+function formatMathText(v){
+  let s=esc(v);
+  // 只轉換獨立的 a/b，不處理網址、日期、檔案路徑。
+  return s.replace(/(^|[^\w.\/-])(\d{1,3})\/(\d{1,3})(?=$|[^\w.\/-])/g,
+    (m,prefix,n,d)=>`${prefix}<span class="math-frac"><span class="num">${n}</span><span class="den">${d}</span></span>`);
+}
+
 
 function applyStudentState(s){
   state=applyStaticConfigsToState(s);
@@ -741,24 +749,85 @@ function renderYard(){
   if(wanderTimer)clearInterval(wanderTimer);
   wanderTimer=setInterval(wanderPets,3800);
 }
-function createPet(p,i){const y=document.getElementById('yard'),wrap=document.createElement('div');wrap.className='pet-pos';wrap.dataset.pet=p.petId;let px=Math.max(2,Math.min(88,Number(p.x)||45));let py=Number(p.y)||70;if(p.movementType==='地面型')py=Math.max(55,Math.min(82,py));else py=Math.max(8,Math.min(82,py));wrap.style.left=px+'%';wrap.style.top=py+'%';const alive=document.createElement('div');alive.className='pet-alive';alive.style.animationDuration=(1.9+(i%5)*.17)+'s';const petImg=getPetImage(p.petId,p.stage)||p.image||'';if(petImg){const img=document.createElement('img');img.src=petImg;img.loading='eager';img.decoding='async';img.onerror=()=>alive.innerHTML=`<div class="fallback">🐾<br>${esc(p.petId)}</div>`;alive.appendChild(img);}else alive.innerHTML=`<div class="fallback">🐾<br>${esc(p.petId)}</div>`;wrap.appendChild(alive);wrap.onclick=()=>petTalk(p,wrap);y.appendChild(wrap);}
+function createPet(p,i){
+  const y=document.getElementById('yard'),wrap=document.createElement('div');
+  wrap.className='pet-pos';wrap.dataset.pet=p.petId;
+  let px=Math.max(2,Math.min(88,Number(p.x)||45));
+  let py=Number(p.y)||70;
+  if(p.movementType==='地面型')py=Math.max(55,Math.min(82,py));else py=Math.max(8,Math.min(82,py));
+  wrap.style.left=px+'%';wrap.style.top=py+'%';
+
+  const alive=document.createElement('div');alive.className='pet-alive';
+  alive.style.animationDuration=(1.9+(i%5)*.17)+'s';
+  const petImg=getPetImage(p.petId,p.stage)||p.image||'';
+  if(petImg){
+    const img=document.createElement('img');img.src=petImg;img.loading='eager';img.decoding='async';
+    img.draggable=false;
+    img.onerror=()=>alive.innerHTML=`<div class="fallback">🐾<br>${esc(p.petId)}</div>`;
+    alive.appendChild(img);
+  }else alive.innerHTML=`<div class="fallback">🐾<br>${esc(p.petId)}</div>`;
+  wrap.appendChild(alive);
+
+  let dragging=false,moved=false;
+  const moveToPointer=(ev)=>{
+    const rect=y.getBoundingClientRect();
+    let x=(ev.clientX-rect.left)/rect.width*100;
+    let yy=(ev.clientY-rect.top)/rect.height*100;
+    x=Math.max(2,Math.min(92,x));yy=Math.max(4,Math.min(88,yy));
+    wrap.style.left=x+'%';wrap.style.top=yy+'%';
+    return {x,y:yy};
+  };
+  wrap.addEventListener('pointerdown',ev=>{
+    if(ev.button!==undefined && ev.button!==0)return;
+    dragging=true;moved=false;DRAGGING_PET_ID=p.petId;
+    wrap.classList.add('dragging');
+    try{wrap.setPointerCapture(ev.pointerId);}catch(e){}
+    ev.preventDefault();
+  });
+  wrap.addEventListener('pointermove',ev=>{
+    if(!dragging)return;
+    moved=true;moveToPointer(ev);ev.preventDefault();
+  });
+  wrap.addEventListener('pointerup',ev=>{
+    if(!dragging)return;
+    dragging=false;DRAGGING_PET_ID='';
+    wrap.classList.remove('dragging');
+    const pt=moveToPointer(ev);
+    let finalY=pt.y;
+    if(p.movementType==='地面型' && finalY<55){
+      finalY=58;
+      wrap.classList.add('drag-fall');
+      requestAnimationFrame(()=>{wrap.style.top=finalY+'%';});
+      setTimeout(()=>wrap.classList.remove('drag-fall'),520);
+    }else if(p.movementType==='地面型'){
+      finalY=Math.max(55,Math.min(82,finalY));wrap.style.top=finalY+'%';
+    }
+    p.x=pt.x;p.y=finalY;
+    gsRaw('savePetPositionsBatch',currentId,[{petId:p.petId,landId:p.landId,x:p.x,y:p.y}]).catch(()=>{});
+    if(!moved)petTalk(p,wrap);
+    ev.preventDefault();
+  });
+  wrap.addEventListener('pointercancel',()=>{dragging=false;DRAGGING_PET_ID='';wrap.classList.remove('dragging');});
+  y.appendChild(wrap);
+}
 function wanderPets(){
   if(!state)return;
   const moved=[];
   state.pets.filter(p=>String(p.landId)===String(state.activeLandId)).forEach(p=>{
+    if(String(DRAGGING_PET_ID)===String(p.petId))return;
     const el=document.querySelector(`.pet-pos[data-pet="${CSS.escape(p.petId)}"]`);if(!el)return;
     const x=4+Math.random()*82;
     const yy=p.movementType==='地面型'?(58+Math.random()*22):(10+Math.random()*70);
     el.style.left=x+'%';el.style.top=yy+'%';p.x=x;p.y=yy;
     moved.push({petId:p.petId,landId:p.landId,x,y:yy});
   });
-  // 約每 6 次移動才批次存一次（約 23 秒），避免每隻寵物每 3.8 秒都連後端
   positionSaveTick++;
   if(moved.length && positionSaveTick%6===0 && !positionSaveBusy){
     positionSaveBusy=true;
-    gs('savePetPositionsBatch',currentId,moved).catch(()=>{}).finally(()=>positionSaveBusy=false);
+    gsRaw('savePetPositionsBatch',currentId,moved).catch(()=>{}).finally(()=>positionSaveBusy=false);
   }
 }
+
 function petTalk(p,el){document.querySelectorAll('.bubble').forEach(x=>x.remove());const b=document.createElement('div');b.className='bubble';b.textContent=p.dialogs[Math.floor(Math.random()*p.dialogs.length)];b.style.left=(el.offsetLeft+el.offsetWidth/2)+'px';b.style.top=el.offsetTop+'px';yard.appendChild(b);setTimeout(()=>b.remove(),2400);}
 function switchTab(tab,btn){currentTab=tab;if(tab==='home')switchMainMode('home');if(tab==='challenge')switchMainMode('battle');document.querySelectorAll('.tabbtn').forEach(x=>x.classList.remove('active'));btn?.classList.add('active');renderCurrentTab();}
 async function renderCurrentTab(){if(currentTab==='home')renderHome();if(currentTab==='upgrade')await renderUpgrade();if(currentTab==='bag')await renderBag();if(currentTab==='challenge')renderChallengeHome();if(currentTab==='mail')await renderMail();if(currentTab==='shop')await renderShop();}
@@ -771,13 +840,61 @@ function renderHome(){
     <div class="home-section"><h4>🖼️ 這塊土地的背景</h4><select id="homeBg" class="full">${ownedBgs.map(bg=>`<option value="${bg.landId}" ${String(bg.landId)===String(activePlot?.backgroundId)?'selected':''}>${esc(bg.name)}</option>`).join('')}</select><button class="btn blue" style="margin-top:7px" onclick="applyHomeBackground()">套用背景</button></div>
     <div class="home-section"><h4>🐾 分配寵物到土地</h4>${state.pets.map(p=>`<div class="petcard"><b>${esc(p.nickname||p.name)}</b><div class="row" style="margin-top:6px"><select id="plot-${p.petId}">${state.lands.map((l,i)=>`<option value="${l['土地ID']}" ${String(p.landId)===String(l['土地ID'])?'selected':''}>土地 ${l.plotIndex||i+1}</option>`).join('')}</select><button class="btn" onclick="movePetUI('${p.petId}')">分配</button></div></div>`).join('')}</div>
     <h4>目前土地上的寵物</h4>${petsHere.map(p=>petCardHtml(p)).join('')||'<div class="petcard">目前這塊土地沒有寵物。</div>'}
-    <button class="btn blue" style="width:100%;margin:8px 0" onclick="switchMainMode('battle');switchTab('challenge',document.querySelector('[data-tab=challenge]'))">⚔️ 切換到對戰畫面</button>`;
+`;
 }
 function petCardHtml(p){const pct=Math.min(100,p.exp/p.expNeed*100);return `<div class="petcard"><b>${esc(p.nickname||p.name)}</b> <span class="small">${esc(p.movementType)}</span><br>Lv.${p.level}・第${p.stage}階<div class="xp"><div style="width:${pct}%"></div></div><small>EXP ${p.exp}/${p.expNeed}</small></div>`;}
 async function changeLand(id){try{const r=await gs('setActiveLandFast',currentId,id);state.activeLandId=r.activeLandId;state.furniture=Array.isArray(r.furniture)?r.furniture:[];renderYard();renderHome();}catch(e){alert(e.message||e);}}
 async function movePetUI(petId){const sel=document.getElementById('plot-'+petId);if(!sel)return;try{await gs('movePetToLand',currentId,petId,sel.value);const p=state.pets.find(x=>x.petId===petId);if(p)p.landId=sel.value;renderYard();renderHome();}catch(e){alert(e.message||e);}}
 async function applyHomeBackground(){const bg=document.getElementById('homeBg')?.value;if(!bg)return;await useBackgroundFromShop(bg);}
-async function renderUpgrade(){if(!Array.isArray(inventory)||!inventory.length)inventory=await gs('getInventory',currentId);const expItems=inventory.filter(x=>x.config?.['類型']==='經驗型');panel.innerHTML=`<h3>⬆️ 寵物升級</h3><label>選擇寵物</label><select id="upPet" class="full">${state.pets.map(p=>`<option value="${p.petId}">${esc(p.name)} Lv.${p.level}</option>`).join('')}</select><div id="upPetInfo" style="margin-top:8px"></div><h4>使用經驗道具</h4>${expItems.length?expItems.map(x=>`<div class="itemcard">${x.config?.['圖片']?`<img src="${esc(x.config['圖片'])}" style="width:72px;height:72px;object-fit:contain;float:left;margin-right:10px">`:''}<b>${esc(x.config['名稱'])}</b> ×${x.quantity}<br><span class="small">+${x.config['效果值']} EXP/個</span><div class="row" style="margin-top:6px"><input id="qty-${x.itemId}" type="number" min="1" max="${x.quantity}" value="1" style="width:80px"><button class="btn" onclick="useExp('${x.itemId}')">使用</button></div></div>`).join(''):'<div class="itemcard">目前沒有經驗型道具。</div>'}`;upPet.onchange=renderUpPetInfo;renderUpPetInfo();}
+async function renderUpgrade(){
+  if(!Array.isArray(inventory)||!inventory.length)inventory=await gs('getInventory',currentId);
+  const expItems=inventory.filter(x=>x.config?.['類型']==='經驗型');
+  panel.innerHTML=`<h3>⬆️ 寵物升級</h3>
+    <label>選擇寵物</label>
+    <select id="upPet" class="full">${state.pets.map(p=>`<option value="${p.petId}">${esc(p.name)} Lv.${p.level}</option>`).join('')}</select>
+    <div id="upPetInfo" style="margin-top:8px"></div>
+    <h4>使用經驗道具</h4>
+    ${expItems.length?`
+      <div class="batch-exp-toolbar">
+        <div class="row">
+          <button class="btn secondary" onclick="toggleAllExpItems(true)">全選</button>
+          <button class="btn gray" onclick="toggleAllExpItems(false)">取消全選</button>
+          <button class="btn purple" onclick="useExpBatch()">批量使用勾選道具</button>
+        </div>
+        <div class="small">每個道具可輸入不同數量，也可以按「全部」快速填滿。</div>
+      </div>
+      ${expItems.map(x=>`<div class="itemcard">
+        <input class="exp-batch-check" type="checkbox" data-item="${esc(x.itemId)}" style="float:right">
+        ${x.config?.['圖片']?`<img src="${esc(x.config['圖片'])}" style="width:72px;height:72px;object-fit:contain;float:left;margin-right:10px">`:''}
+        <b>${esc(x.config['名稱'])}</b> ×${x.quantity}<br>
+        <span class="small">+${x.config['效果值']} EXP/個</span>
+        <div class="row" style="margin-top:6px">
+          <input id="qty-${x.itemId}" type="number" min="1" max="${x.quantity}" value="1" style="width:80px">
+          <button class="btn secondary" onclick="document.getElementById('qty-${x.itemId}').value='${x.quantity}'">全部</button>
+          <button class="btn" onclick="useExp('${x.itemId}')">使用</button>
+        </div>
+        <div style="clear:both"></div>
+      </div>`).join('')}
+    `:'<div class="itemcard">目前沒有經驗型道具。</div>'}`;
+  upPet.onchange=renderUpPetInfo;renderUpPetInfo();
+}
+function toggleAllExpItems(on){document.querySelectorAll('.exp-batch-check').forEach(x=>x.checked=!!on);}
+async function useExpBatch(){
+  const petId=upPet.value;
+  const uses=[...document.querySelectorAll('.exp-batch-check:checked')].map(x=>{
+    const itemId=x.dataset.item;
+    return {itemId,quantity:Math.max(1,Number(document.getElementById('qty-'+itemId)?.value||1))};
+  });
+  if(!uses.length){alert('請先勾選要使用的經驗道具');return;}
+  try{
+    const r=await gs('useExpItemsBatchV599',currentId,petId,uses);
+    inventory=Array.isArray(r.inventory)?r.inventory:inventory;
+    const p=state.pets.find(x=>x.petId===petId);
+    if(p){p.level=Number(r.level||p.level);p.exp=Number(r.exp??p.exp);p.stage=Number(r.stage||p.stage);p.expNeed=Number(r.expNeed||p.expNeed);p.image=getPetImage(p.petId,p.stage)||r.image||p.image;}
+    await renderUpgrade();renderYard();
+    const note=document.createElement('div');note.className='success';note.textContent=`✅ 批量使用完成，共 +${r.gained} EXP`;panel.prepend(note);setTimeout(()=>note.remove(),1800);
+  }catch(e){alert(e.message||e);}
+}
 function renderUpPetInfo(){const p=state.pets.find(x=>x.petId===upPet.value);if(p)upPetInfo.innerHTML=petCardHtml(p);}
 async function useExp(itemId){
   const petId=upPet.value,qty=Number(document.getElementById('qty-'+itemId).value||1);
@@ -885,12 +1002,12 @@ function renderBattleQuestion(){
   }else if(String(q.type).includes('是非')){
     answer=`<div class="grid2"><button class="btn blue option" onclick="sendBattleAnswer('A')">⭕ 是</button><button class="btn red option" onclick="sendBattleAnswer('B')">❌ 否</button></div>`;
   }else{
-    answer=(q.options||[]).map((o,i)=>`<button class="btn option blue" onclick="sendBattleAnswer('${String.fromCharCode(65+i)}')">${String.fromCharCode(65+i)}. ${esc(o)}</button>`).join('');
+    answer=(q.options||[]).map((o,i)=>`<button class="btn option blue" onclick="sendBattleAnswer('${String.fromCharCode(65+i)}')">${String.fromCharCode(65+i)}. ${formatMathText(o)}</button>`).join('');
   }
 
   panel.innerHTML=`<div class="question-overlay">
     <div class="row"><b>${esc(skill.icon||'✨')} ${esc(skill.name)}</b><span>威力 ${skill.damage}</span></div>
-    <div class="qtext">${esc(q.text)}</div>
+    <div class="qtext">${formatMathText(q.text)}</div>
     ${questionImageHtml(q)}
     ${answer}
     <button class="btn gray" style="margin-top:8px" onclick="renderBattle()">取消技能</button>
@@ -906,7 +1023,7 @@ async function sendBattleAnswer(ans){
   const damage=Math.max(1,Math.round(Number(skill.damage||0)*(good?1:.3)));
   challenge.pending.push({questionId:q.id,answer:ans});challenge.seen.push(q.id);challenge.qIndex++;
   if(challenge.questions && challenge.questions.length-challenge.qIndex<=6){const refill=localQuestionBatch(challenge.subject,challenge.seen.slice(-80),30);if(refill.length){challenge.questions=challenge.questions.slice(challenge.qIndex).concat(refill);challenge.qIndex=0;}}
-  challenge.lastMsg=good?`<span class="success">✅ 正確！${esc(skill.name)}造成 <span class="damage-pop">${damage}</span> 傷害，+${gained} EXP</span>`:`<span class="wrong">❌ 答錯，只造成 30% 傷害：<span class="damage-pop">${damage}</span><br>正確答案：${esc(q.answer)} ${esc(q.explanation||'')}</span>`;
+  challenge.lastMsg=good?`<span class="success">✅ 正確！${esc(skill.name)}造成 <span class="damage-pop">${damage}</span> 傷害，+${gained} EXP</span>`:`<span class="wrong">❌ 答錯，只造成 30% 傷害：<span class="damage-pop">${damage}</span><br>正確答案：${formatMathText(q.answer)} ${formatMathText(q.explanation||'')}</span>`;
   challenge.question=null;challenge.selectedSkill=null;
 
   // 先播放寵物向怪物撞擊的動畫，再扣血。
@@ -953,7 +1070,7 @@ async function sendAnswer(ans){
   if(good){challenge.status.correct=Number(challenge.status.correct||0)+1;gained=challengeLocalExp(challenge.status.correct);challenge.status.exp=Number(challenge.status.exp||0)+gained;}
   else challenge.status.wrong=Number(challenge.status.wrong||0)+1;
   challenge.pending.push({questionId:q.id,answer:ans});challenge.seen.push(q.id);
-  const msg=good?`<span class="success">✅ 正確！+${gained} EXP</span>`:`<span class="wrong">❌ 錯誤。正確答案：${esc(q.answer)}<br>${esc(q.explanation||'')}</span>`;
+  const msg=good?`<span class="success">✅ 正確！+${gained} EXP</span>`:`<span class="wrong">❌ 錯誤。正確答案：${formatMathText(q.answer)}<br>${formatMathText(q.explanation||'')}</span>`;
   if(challenge.status.wrong>=3){await flushChallengeAnswers(true);panel.innerHTML=`<div class="qbox"><h3>今日挑戰結束</h3>${msg}<p>答對：${challenge.status.correct} 題</p><p>累積 EXP：${challenge.status.exp}</p><p>明早 7:00 後重置。</p><button class="btn gray" onclick="refreshState().then(()=>renderChallengeHome())">返回</button></div>`;return;}
   challenge.qIndex++;
   if(challenge.qIndex>=challenge.questions.length){challenge.question=null;renderQuestion(challenge.status,msg);}
@@ -1218,7 +1335,35 @@ function logout(){
   studentView.classList.add('hidden');adminView.classList.add('hidden');loginView.classList.remove('hidden');
 }
 let adminPassword=sessionStorage.getItem('petHouseAdminPassword')||'';
-async function openAdmin(){const pw=prompt('請輸入老師後台密碼：');if(!pw)return;try{await gs('adminLogin',pw);adminPassword=pw;sessionStorage.setItem('petHouseAdminPassword',pw);loginView.classList.add('hidden');adminView.classList.remove('hidden');await loadAdmin();}catch(e){alert('密碼錯誤或後台驗證失敗：'+(e.message||e));}}
+async function askAdminPassword(){
+  return new Promise(resolve=>{
+    const modal=document.getElementById('adminPasswordModal');
+    const input=document.getElementById('adminPasswordInput');
+    const ok=document.getElementById('adminPasswordOk');
+    const cancel=document.getElementById('adminPasswordCancel');
+    if(!modal||!input){resolve('');return;}
+    modal.classList.add('show');input.value='';setTimeout(()=>input.focus(),20);
+    const done=(value)=>{
+      modal.classList.remove('show');
+      ok.onclick=null;cancel.onclick=null;input.onkeydown=null;
+      resolve(value);
+    };
+    ok.onclick=()=>done(input.value);
+    cancel.onclick=()=>done('');
+    input.onkeydown=e=>{if(e.key==='Enter')done(input.value);if(e.key==='Escape')done('');};
+  });
+}
+async function openAdmin(){
+  const pw=await askAdminPassword();
+  if(!pw)return;
+  try{
+    await gs('adminLogin',pw);
+    adminPassword=pw;
+    sessionStorage.setItem('petHouseAdminPassword',pw);
+    loginView.classList.add('hidden');adminView.classList.remove('hidden');
+    await loadAdmin();
+  }catch(e){alert('密碼錯誤或後台驗證失敗：'+(e.message||e));}
+}
 async function loadAdmin(){
   if(!adminPassword){logout();return;}
   adminData=await gs('getAdminDataSecure',adminPassword);
@@ -1227,22 +1372,34 @@ async function loadAdmin(){
   adminArea.innerHTML=`
     <div class="petcard" style="margin-bottom:12px">
       <div class="row" style="justify-content:space-between;align-items:center">
-        <div>
-          <b>⚙️ 遊戲設定快取</b>
-          <div class="small">新增寵物、怪物、道具、背景或修改題庫後，按一次即可讓網站讀取最新試算表設定。</div>
-        </div>
+        <div><b>⚙️ 遊戲設定快取</b><div class="small">修改試算表後按一次，成功時會顯示更新時間。</div></div>
         <button class="btn blue" onclick="adminRefreshGameConfig()">🔄 更新遊戲設定</button>
       </div>
       <div id="admin-config-status" class="small" style="margin-top:8px"></div>
     </div>
+
+    <div class="bulk-admin-card">
+      <b>🎁 批量發放道具</b>
+      <div class="row" style="margin-top:8px">
+        <select id="bulkItem">${itemOpts}</select>
+        <input id="bulkItemQty" type="number" min="1" value="1" style="width:85px" title="數量">
+        <button class="btn secondary" onclick="toggleAllAdminStudents(true)">全選</button>
+        <button class="btn gray" onclick="toggleAllAdminStudents(false)">取消全選</button>
+        <button class="btn purple" onclick="adminBulkItem()">發給勾選學生</button>
+      </div>
+      <div class="small">先勾選下方學生，再一次發放；後端會批次寫入，不用一個一個等。</div>
+    </div>
+
     <table class="admin-table">
-      <thead><tr><th>座號</th><th>學生</th><th>金幣</th><th>發獎勵</th></tr></thead>
+      <thead><tr><th>選</th><th>座號</th><th>學生</th><th>金幣</th><th>發獎勵</th></tr></thead>
       <tbody>${adminData.students.map(s=>`<tr>
+        <td><input class="admin-student-check" type="checkbox" value="${esc(s.id)}"></td>
         <td>${s.seat||''}</td>
         <td>${esc(s.name)}<br><span class="small">${esc(s.id)}</span></td>
-        <td>${s.coins}</td>
+        <td><span id="coin-${s.id}">${s.coins}</span></td>
         <td><div class="row">
-          <button class="btn" onclick="adminCoin('${s.id}',10)">+10🪙</button>
+          <input id="coinamt-${s.id}" type="number" min="1" value="10" style="width:75px">
+          <button class="btn" onclick="adminCoinCustom('${s.id}')">發金幣</button>
           <select id="it-${s.id}">${itemOpts}</select>
           <input id="iq-${s.id}" type="number" min="1" value="1" style="width:65px">
           <button class="btn purple" onclick="adminItem('${s.id}')">發道具</button>
@@ -1252,21 +1409,48 @@ async function loadAdmin(){
       </tr>`).join('')}</tbody>
     </table>`;
 }
+function toggleAllAdminStudents(on){
+  document.querySelectorAll('.admin-student-check').forEach(x=>x.checked=!!on);
+}
+async function adminBulkItem(){
+  const ids=[...document.querySelectorAll('.admin-student-check:checked')].map(x=>x.value);
+  const item=document.getElementById('bulkItem')?.value;
+  const qty=Math.max(1,Number(document.getElementById('bulkItemQty')?.value||1));
+  if(!ids.length){alert('請先勾選至少一位學生');return;}
+  try{
+    const r=await gs('adminGrantItemsBatchV599',adminPassword,ids,item,qty,'課堂批量獎勵');
+    alert(`✅ 已完成：${r.updated||ids.length} 位學生，每人 ${qty} 個`);
+  }catch(e){alert(e.message||e);}
+}
+async function adminCoinCustom(id){
+  const amount=Math.max(1,Number(document.getElementById('coinamt-'+id)?.value||0));
+  if(!amount)return;
+  try{
+    const r=await gs('adminAddCoinsFastV599',adminPassword,id,amount,'課堂獎勵');
+    const el=document.getElementById('coin-'+id);if(el)el.textContent=Number(r.coins||0);
+  }catch(e){alert(e.message||e);}
+}
+
 async function adminRefreshGameConfig(){
   try{
+    const st=document.getElementById('admin-config-status');
+    if(st)st.textContent='正在更新…';
     const data=await gs('adminRefreshGameConfigV598',adminPassword);
     if(data?.catalog){
       applyStaticCatalogBundle(data.catalog);
       saveStaticCatalogCache(data.catalog);
     }
+    if(st){
+      st.innerHTML=`✅ 更新成功：${esc(data?.updatedAt||'剛剛')}。新登入/重新整理的學生會使用最新設定。`;
+      st.style.color='#17813b';
+    }
+    alert('✅ 遊戲設定已更新完成');
+  }catch(e){
     const st=document.getElementById('admin-config-status');
-    if(st)st.innerHTML=`✅ 已更新：${esc(data?.updatedAt||'剛剛')}。之後學生會直接使用最新快取。`;
-    // 寵物/道具選單也要立刻反映新增內容。
-    await loadAdmin();
-  }catch(e){alert(e.message||e);}
+    if(st){st.textContent='❌ 更新失敗：'+(e.message||e);st.style.color='#b33';}
+    alert(e.message||e);
+  }
 }
-
-async function adminCoin(id,n){await gs('adminAddCoins',adminPassword,id,n,'課堂獎勵');await loadAdmin();}
 async function adminItem(id){
   if(adminBusyItem.has(id))return;
   const item=document.getElementById('it-'+id).value,qty=Number(document.getElementById('iq-'+id).value||1);
