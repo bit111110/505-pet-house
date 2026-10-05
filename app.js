@@ -1,4 +1,4 @@
-const FRONTEND_BUILD='20261005-2030';
+const FRONTEND_BUILD='20261005-2100';
 const BUILTIN_LAND_BACKGROUNDS = {
   'LAND001': 'assets/maps/grassland.png',
   'LAND002': 'assets/maps/forest.png',
@@ -235,9 +235,11 @@ function localQuestionBatch(subject,excludeIds=[],limit=30){
   return shuffleCopy(pool).slice(0,Math.max(1,limit));
 }
 async function ensureQuestionBank(subject){
+  subject=String(subject||'');
   if(Array.isArray(QUESTION_BANK_CACHE[subject]) && QUESTION_BANK_CACHE[subject].length)return QUESTION_BANK_CACHE[subject];
-  const bundle=await gs('getQuestionBankBundleFast');
-  installQuestionBank(bundle);
+  const rows=await gs('getQuestionBankSubjectFast',subject);
+  if(Array.isArray(rows))QUESTION_BANK_CACHE[subject]=rows;
+  QUESTION_BANK_READY=Object.keys(QUESTION_BANK_CACHE).some(k=>Array.isArray(QUESTION_BANK_CACHE[k])&&QUESTION_BANK_CACHE[k].length);
   return QUESTION_BANK_CACHE[subject]||[];
 }
 async function hydrateAfterLoginV596(){
@@ -259,8 +261,17 @@ async function hydrateAfterLoginV596(){
         if(Array.isArray(r.petBattleConfigs))PET_BATTLE_CONFIGS=Object.fromEntries(r.petBattleConfigs.map(x=>[String(x.petId),x]));
         if(state){state.unreadMail=Number(r.unreadMail||0);mailBadge.textContent=state.unreadMail;mailBadge.classList.toggle('hidden',!state.unreadMail);}
       }
-      if(bundle?.questionBank)installQuestionBank(bundle.questionBank);
       if(state && bundle?.challengeStatus)state.challengeStatus=bundle.challengeStatus;
+
+      // 題庫改成「單科、分次」預載，避免一次回傳五科造成 Apps Script 回傳過大。
+      (async()=>{
+        const order=['數學','國語','英文','自然','社會'];
+        for(const s of order){
+          if(Array.isArray(QUESTION_BANK_CACHE[s])&&QUESTION_BANK_CACHE[s].length)continue;
+          try{await ensureQuestionBank(s);}catch(e){console.warn('題庫預載失敗',s,e);}
+          await new Promise(r=>setTimeout(r,120));
+        }
+      })();
       if(currentTab==='home')renderHome();
       if(currentTab==='challenge')renderChallengeHome();
       renderYard();
@@ -680,7 +691,7 @@ async function startChallengeUI(){
       await ensureQuestionBank(challenge.subject);
       pool=localQuestionBatch(challenge.subject,[],30);
     }
-    if(!pool.length)throw new Error('這個科目目前沒有啟用中的題目');
+    if(!pool.length)throw new Error('這個科目目前沒有可用題目；若剛登入，請等 1 秒後再按一次開始戰鬥。');
 
     challenge.questions=pool;
     challenge.qIndex=0;

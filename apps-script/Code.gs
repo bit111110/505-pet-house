@@ -4,10 +4,13 @@
  * Google Apps Script + Google 試算表
  */
 
-const APP_VERSION='V5.5';
+const APP_VERSION='V5.9.6';
 const TZ = 'Asia/Taipei';
 
 const SHEETS = {
+  BATTLE_BACKGROUNDS:'對戰背景設定',
+  PET_BATTLE:'寵物戰鬥設定',
+  MONSTERS:'怪物設定',
   STUDENTS: '學生資料',
   PETS: '學生寵物',
   PET_CONFIG: '寵物設定',
@@ -44,7 +47,7 @@ function setupOrUpgradeV4() {
   ensureSheet_ (SHEETS.STUDENTS, ['學號','姓名','生日','金幣','是否啟用','建立時間','座號','最後整點禮物']);
   ensureSheet_ (SHEETS.PETS, ['學號','寵物ID','暱稱','等級','EXP','階段','土地ID','X','Y','是否目前顯示']);
   ensureSheet_ (SHEETS.PET_CONFIG, ['寵物ID','名稱','第一階圖片','第二階圖片','第三階圖片','第二階需求等級','第三階需求等級','取得價格','是否開放','對話1','對話2','對話3','移動類型']);
-  ensureSheet_ (SHEETS.LANDS, ['土地ID','名稱','價格','背景圖片','寬度','高度','是否開放']);
+  ensureSheet_ (SHEETS.LANDS, ['土地ID','名稱','價格','背景圖片','寬度','高度','是否開放','取得方式','兌換道具ID','兌換數量']);
   ensureSheet_ (SHEETS.STUDENT_LANDS, ['學號','土地ID','是否擁有','購買時間','是否使用']);
   ensureSheet_ (SHEETS.FURNITURE, ['家具ID','名稱','價格','圖片','類型','是否開放']);
   ensureSheet_ (SHEETS.STUDENT_FURNITURE, ['學號','家具ID','數量','土地ID','X','Y','縮放','旋轉']);
@@ -52,7 +55,7 @@ function setupOrUpgradeV4() {
   ensureSheet_ (SHEETS.ITEM_CONFIG, ['道具ID','名稱','類型','效果值','圖片','說明','是否開放']);
   ensureSheet_ (SHEETS.STUDENT_ITEMS, ['學號','道具ID','數量']);
   ensureSheet_ (SHEETS.MAILBOX, ['信件ID','學號','時間','寄件者','標題','內容','附件類型','附件ID','附件數量','是否領取']);
-  ensureSheet_ (SHEETS.QUESTIONS, ['題目ID','科目','題型','題目','選項A','選項B','選項C','選項D','答案','解析','是否啟用']);
+  ensureSheet_ (SHEETS.QUESTIONS, ['題目ID','科目','單元','題型','題目','選項A','選項B','選項C','選項D','答案','解析','圖片ID','圖片路徑','是否啟用']);
   ensureSheet_ (SHEETS.CHALLENGES, ['週期','學號','科目','寵物ID','答對數','錯誤數','總EXP','最後題目ID','最後更新']);
 
   seedV4Defaults_();
@@ -251,6 +254,7 @@ function cachedObjects_(sheetName, ttlSec){
 function clearGameConfigCache(){
   const c=CacheService.getScriptCache();
   [SHEETS.PET_CONFIG,SHEETS.LANDS,SHEETS.FURNITURE,SHEETS.ITEM_CONFIG,SHEETS.QUESTIONS].forEach(n=>c.remove('CFG_'+n));
+  ['FAST_BG_CATALOG','FAST_MONSTER_CATALOG'].forEach(k=>c.remove(k));
   return true;
 }
 function cachedMap_(sheetName,keyCol,ttlSec){
@@ -338,6 +342,7 @@ function decoratePet_(p,cfg){
     petId:String(p['寵物ID']),name:cfg['名稱']||p['寵物ID'],nickname:p['暱稱']||'',level,exp,expNeed:expNeeded_(level),stage,
     landId:String(p['土地ID']||'LAND001'),x:Number(p['X']||45),y:Number(p['Y']||70),image:image||'',
     movementType:String(cfg['移動類型']||'地面型'),
+    attribute:String(cfg['屬性']||'光'),
     dialogs:[cfg['對話1']||'今天也一起努力吧！',cfg['對話2']||'我喜歡這裡～',cfg['對話3']||'一起變強吧！']
   };
 }
@@ -400,27 +405,7 @@ function useExpItem(studentId,itemId,petId,quantity){
 }
 
 /** 信箱與整點禮物 */
-function generateHourlyGifts_(studentId){
-  const f=findStudentRow_(studentId); if(!f) return;
-  const pets=readObjects_(SpreadsheetApp.getActive().getSheetByName(SHEETS.PETS)).filter(x=>String(x['學號']).trim()===String(studentId).trim());
-  if(!pets.length) return;
-  const now=new Date();
-  const thisHour=new Date(now); thisHour.setMinutes(0,0,0);
-  const col=f.hm['最後整點禮物'];
-  let last=f.obj['最後整點禮物'];
-  if(!(last instanceof Date) || isNaN(last)){
-    f.sheet.getRange(f.row,col).setValue(thisHour); return;
-  }
-  let cursor=new Date(last); cursor.setMinutes(0,0,0); cursor=new Date(cursor.getTime()+3600000);
-  let made=0;
-  while(cursor<=thisHour && made<48){
-    const pet=pets[made % pets.length];
-    const gift=randomGift_();
-    createMail_(studentId, String(pet['寵物ID']), '整點小禮物', '寵物在整點時替你帶回了一份禮物！', '道具', gift.itemId, gift.qty, cursor);
-    made++; cursor=new Date(cursor.getTime()+3600000);
-  }
-  f.sheet.getRange(f.row,col).setValue(thisHour);
-}
+function generateHourlyGifts_(studentId){ return generateHourlyGiftsFast_(studentId); }
 
 function randomGift_(){
   const r=Math.random();
@@ -439,22 +424,14 @@ function createMail_(studentId,sender,title,content,attachType,attachId,qty,time
   return id;
 }
 
-function getMailbox(studentId){
-  const id=String(studentId).trim();
-  const itemCfg=cachedObjects_(SHEETS.ITEM_CONFIG,300); const m={}; itemCfg.forEach(x=>m[String(x['道具ID'])]=x);
-  const rows = readObjects_(SpreadsheetApp.getActive().getSheetByName(SHEETS.MAILBOX)).filter(x=>String(x['學號']).trim()===id)
-    .sort((a,b)=>new Date(b['時間'])-new Date(a['時間']))
-    .slice(0,100).map(x=>({...x,附件名稱:(m[String(x['附件ID'])]||{})['名稱']||x['附件ID']}));
-  return safeForClient_(rows);
-}
+function getMailbox(studentId){ return getMailboxFast_(studentId); }
 
 /** 背景更新用：先補整點禮物，再回傳信箱。 */
 function getMailboxFresh(studentId){
   const id=String(studentId||'').trim();
-  generateHourlyGifts_(id);
-  const mailbox=getMailbox(id);
-  const unreadMail=mailbox.filter(x=>!(x['是否領取']===true || String(x['是否領取']).toUpperCase()==='TRUE')).length;
-  return {mailbox:mailbox,unreadMail:unreadMail};
+  generateHourlyGiftsFast_(id);
+  const mailbox=getMailboxFast_(id);
+  return {mailbox:mailbox,unreadMail:getUnreadMailCountFast_(id)};
 }
 
 /**
@@ -499,9 +476,7 @@ function claimMail(studentId,mailId){
   throw new Error('找不到信件');
 }
 
-function getUnreadMailCount_(studentId){
-  return readObjects_(SpreadsheetApp.getActive().getSheetByName(SHEETS.MAILBOX)).filter(x=>String(x['學號']).trim()===String(studentId).trim() && !(x['是否領取']===true || String(x['是否領取']).toUpperCase()==='TRUE')).length;
-}
+function getUnreadMailCount_(studentId){ return getUnreadMailCountFast_(studentId); }
 
 /** 挑戰 */
 function getAllChallengeStatus_(studentId){
@@ -584,12 +559,27 @@ function getOrCreateChallenge_(studentId,subject,petId){
   const row=sh.getLastRow(); return {sheet:sh,row,hm:headerMap_(sh),obj:rowObject_(sh,sh.getRange(row,1,1,sh.getLastColumn()).getValues()[0])};
 }
 
+function resolveQuestionImage_(x){
+  const fallback={
+    'M001':'IMG001','M002':'IMG001',
+    'M004':'IMG002','M005':'IMG002',
+    'M009':'IMG003','M010':'IMG004',
+    'M025':'IMG005','M029':'IMG006',
+    'M032':'IMG007','M036':'IMG008'
+  };
+  let imageId=String(x['圖片ID']||'').trim();
+  if(!imageId) imageId=fallback[String(x['題目ID']||'')]||'';
+  let image=String(x['圖片路徑']||'').trim().replace(/\\/g,'/');
+  if(!image && imageId) image='assets/math/'+imageId+'.png';
+  return {imageId:imageId,image:image};
+}
+
 function getRandomQuestion_(subject,lastId){
   let q=cachedObjects_(SHEETS.QUESTIONS,300).filter(x=>String(x['科目'])===String(subject) && x['是否啟用']!==false && String(x['是否啟用']).toUpperCase()!=='FALSE');
   if(!q.length) return null;
   if(q.length>1) q=q.filter(x=>String(x['題目ID'])!==String(lastId));
   const x=q[Math.floor(Math.random()*q.length)];
-  return {id:String(x['題目ID']),subject:String(x['科目']),type:String(x['題型']||'選擇題'),text:String(x['題目']),options:[x['選項A'],x['選項B'],x['選項C'],x['選項D']].filter(v=>v!=='' && v!=null)};
+  const qi=resolveQuestionImage_(x); return {id:String(x['題目ID']),subject:String(x['科目']),unit:String(x['單元']||''),type:String(x['題型']||'選擇題'),text:String(x['題目']),options:[x['選項A'],x['選項B'],x['選項C'],x['選項D']].filter(v=>v!=='' && v!=null),imageId:qi.imageId,image:qi.image};
 }
 
 function challengePeriodKey_(d){
@@ -631,6 +621,42 @@ function savePetPosition(studentId,petId,landId,x,y){
     sh.getRange(i+1,hm['土地ID']).setValue(landId||'LAND001'); sh.getRange(i+1,hm['X']).setValue(Number(x)); sh.getRange(i+1,hm['Y']).setValue(Number(y)); return true;
   }
   return false;
+}
+
+
+function getBackgroundCatalogFresh(){
+  const rows=readObjects_(SpreadsheetApp.getActive().getSheetByName(SHEETS.LANDS))
+    .filter(x=>x['是否開放']!==false);
+  const itemMap={};
+  readObjects_(SpreadsheetApp.getActive().getSheetByName(SHEETS.ITEM_CONFIG)).forEach(x=>itemMap[String(x['道具ID'])]=x);
+
+  return safeForClient_(rows.map(x=>{
+    const acquireType=String(x['取得方式']||'金幣').trim();
+    const itemId=String(x['兌換道具ID']||'').trim();
+    const exchangeQty=(x['兌換數量']===''||x['兌換數量']===null||x['兌換數量']===undefined)?'':Number(x['兌換數量']);
+    const itemName=String((itemMap[itemId]||{})['名稱']||itemId);
+    const price=(x['價格']===''||x['價格']===null||x['價格']===undefined)?'':Number(x['價格']);
+
+    return {
+      landId:String(x['土地ID']||''),
+      name:String(x['名稱']||x['土地ID']||''),
+      price:price,
+      background:String(x['背景圖片']||''),
+      width:Number(x['寬度']||900),
+      height:Number(x['高度']||560),
+      enabled:x['是否開放']!==false,
+      acquireType:acquireType,
+      exchangeItemId:itemId,
+      exchangeQty:exchangeQty,
+      exchangeItemName:itemName,
+
+      // 同時回傳中文鍵，避免任何前端版本在欄位映射時遺失。
+      '取得方式':acquireType,
+      '兌換道具ID':itemId,
+      '兌換數量':exchangeQty,
+      '兌換道具名稱':itemName
+    };
+  }));
 }
 
 function getShop(){
@@ -699,11 +725,15 @@ function getChallengeQuestionBatch(subject, excludeIds, limit){
   if(rows.length>1){ const filtered=rows.filter(x=>!ex.has(String(x['題目ID']))); if(filtered.length) rows=filtered; }
   // 洗牌
   for(let i=rows.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[rows[i],rows[j]]=[rows[j],rows[i]];}
-  return rows.slice(0,limit).map(x=>({
-    id:String(x['題目ID']),subject:String(x['科目']),type:String(x['題型']||'選擇題'),text:String(x['題目']),
-    options:[x['選項A'],x['選項B'],x['選項C'],x['選項D']].filter(v=>v!==''&&v!=null),
-    answer:String(x['答案']||''),explanation:String(x['解析']||'')
-  }));
+  return rows.slice(0,limit).map(x=>{
+    const qi=resolveQuestionImage_(x);
+    return {
+      id:String(x['題目ID']),subject:String(x['科目']),unit:String(x['單元']||''),type:String(x['題型']||'選擇題'),text:String(x['題目']),
+      options:[x['選項A'],x['選項B'],x['選項C'],x['選項D']].filter(v=>v!==''&&v!=null),
+      answer:String(x['答案']||''),explanation:String(x['解析']||''),
+      imageId:qi.imageId,image:qi.image
+    };
+  });
 }
 function startChallengeBatch(studentId,subject,petId){
   const id=String(studentId).trim(); validatePetOwnership_(id,petId);
@@ -793,6 +823,215 @@ function importAllPetStagesFromDrive(){
   return true;
 }
 
+
+/** ====================== V5.8 效能核心 ====================== **/
+
+function fastCache_(){
+  return CacheService.getScriptCache();
+}
+
+function clearRuntimeCaches_(studentId){
+  const c=fastCache_();
+  const keys=[
+    'FAST_BG_CATALOG','FAST_MONSTER_CATALOG',
+    'FAST_STUDENT_INDEX'
+  ];
+  if(studentId){
+    const id=String(studentId).trim();
+    keys.push('READY_'+id);
+  }
+  keys.forEach(k=>{try{c.remove(k);}catch(e){}});
+}
+
+function headerMapFast_(sh){
+  const c=fastCache_();
+  const key='HDR_'+sh.getSheetId()+'_'+sh.getLastColumn();
+  const hit=c.get(key);
+  if(hit){try{return JSON.parse(hit);}catch(e){}}
+  const h=sh.getRange(1,1,1,sh.getLastColumn()).getValues()[0];
+  const m={};h.forEach((x,i)=>m[String(x).trim()]=i+1);
+  try{c.put(key,JSON.stringify(m),21600);}catch(e){}
+  return m;
+}
+
+function objectRow_(sh,obj){
+  const hm=headerMapFast_(sh);
+  const row=Array(sh.getLastColumn()).fill('');
+  Object.keys(obj).forEach(k=>{if(hm[k])row[hm[k]-1]=obj[k];});
+  return row;
+}
+
+function appendObjectsBatch_(sh,objects){
+  if(!objects || !objects.length)return;
+  const rows=objects.map(o=>objectRow_(sh,o));
+  sh.getRange(sh.getLastRow()+1,1,rows.length,sh.getLastColumn()).setValues(rows);
+}
+
+function ensureStudentReadyFast_(studentId){
+  const id=String(studentId||'').trim();
+  if(!id)return;
+  const c=fastCache_(),key='READY_'+id;
+  if(c.get(key)==='1')return;
+  ensureStarterData_(id);
+  ensurePlotData_(id);
+  try{c.put(key,'1',21600);}catch(e){}
+}
+
+/** 從表格尾端分段找某學生最近的資料，避免信箱數萬列時整張 getDataRange。 */
+function recentRowsForStudent_(sh,studentId,idHeader,limit,chunkSize){
+  if(!sh || sh.getLastRow()<2)return [];
+  const hm=headerMapFast_(sh), idCol=hm[idHeader];
+  if(!idCol)return [];
+  const lastCol=sh.getLastColumn(), lastRow=sh.getLastRow();
+  const wanted=String(studentId).trim();
+  const out=[];
+  chunkSize=Math.max(100,Number(chunkSize||500));
+  for(let endRow=lastRow;endRow>=2 && out.length<limit;endRow-=chunkSize){
+    const startRow=Math.max(2,endRow-chunkSize+1);
+    const num=endRow-startRow+1;
+    const vals=sh.getRange(startRow,1,num,lastCol).getValues();
+    for(let i=vals.length-1;i>=0 && out.length<limit;i--){
+      if(String(vals[i][idCol-1]||'').trim()!==wanted)continue;
+      const o={};
+      Object.keys(hm).forEach(k=>o[k]=vals[i][hm[k]-1]);
+      out.push(o);
+    }
+  }
+  return out;
+}
+
+/** 未讀數只讀「學號」與「是否領取」兩欄，不再抓信箱全部欄位。 */
+function getUnreadMailCountFast_(studentId){
+  const sh=SpreadsheetApp.getActive().getSheetByName(SHEETS.MAILBOX);
+  if(!sh || sh.getLastRow()<2)return 0;
+  const hm=headerMapFast_(sh), idCol=hm['學號'], claimedCol=hm['是否領取'];
+  const n=sh.getLastRow()-1;
+  const ids=sh.getRange(2,idCol,n,1).getValues();
+  const claimed=sh.getRange(2,claimedCol,n,1).getValues();
+  const wanted=String(studentId).trim();
+  let count=0;
+  for(let i=0;i<n;i++){
+    if(String(ids[i][0]||'').trim()!==wanted)continue;
+    const v=claimed[i][0];
+    if(!(v===true||String(v).toUpperCase()==='TRUE'))count++;
+  }
+  return count;
+}
+
+function getMailboxFast_(studentId){
+  const id=String(studentId).trim();
+  const itemCfg=cachedObjects_(SHEETS.ITEM_CONFIG,300),m={};
+  itemCfg.forEach(x=>m[String(x['道具ID'])]=x);
+  const sh=SpreadsheetApp.getActive().getSheetByName(SHEETS.MAILBOX);
+  const rows=recentRowsForStudent_(sh,id,'學號',100,600)
+    .map(x=>({...x,附件名稱:(m[String(x['附件ID'])]||{})['名稱']||x['附件ID']}));
+  return safeForClient_(rows);
+}
+
+function getBackgroundCatalogCached_(){
+  const c=fastCache_(),key='FAST_BG_CATALOG';
+  const hit=c.get(key);
+  if(hit){try{return JSON.parse(hit);}catch(e){}}
+  const rows=getBackgroundCatalogFresh();
+  try{c.put(key,JSON.stringify(rows),30);}catch(e){}
+  return rows;
+}
+function getBackgroundCatalogFast(){
+  return getBackgroundCatalogCached_();
+}
+
+function getMonsterCatalogCached_(){
+  const c=fastCache_(),key='FAST_MONSTER_CATALOG';
+  const hit=c.get(key);
+  if(hit){try{return JSON.parse(hit);}catch(e){}}
+  const rows=getMonsterCatalogFresh();
+  try{c.put(key,JSON.stringify(rows),300);}catch(e){}
+  return rows;
+}
+
+/** 登入後一次取得信箱、背包、背景、怪物。原本是 4 次 API。 */
+function getRuntimeBundleFast(studentId){
+  const id=String(studentId||'').trim();
+  generateHourlyGiftsFast_(id);
+  return safeForClient_({
+    mailbox:getMailboxFast_(id),
+    unreadMail:getUnreadMailCountFast_(id),
+    inventory:getInventory(id),
+    backgrounds:getBackgroundCatalogCached_(),
+    monsters:getMonsterCatalogCached_(),
+    battleBackgrounds:getBattleBackgroundCatalogFast(),
+    petBattleConfigs:getPetBattleConfigFast()
+  });
+}
+
+/** 整點禮物改成一次 setValues，不再每封 appendRow。 */
+function generateHourlyGiftsFast_(studentId){
+  const id=String(studentId||'').trim();
+  const f=findStudentRow_(id);if(!f)return;
+  const pets=readObjects_(SpreadsheetApp.getActive().getSheetByName(SHEETS.PETS))
+    .filter(x=>String(x['學號']).trim()===id);
+  if(!pets.length)return;
+
+  const now=new Date(),thisHour=new Date(now);thisHour.setMinutes(0,0,0);
+  const col=f.hm['最後整點禮物'];
+  let last=f.obj['最後整點禮物'];
+  if(!(last instanceof Date)||isNaN(last)){
+    f.sheet.getRange(f.row,col).setValue(thisHour);return;
+  }
+
+  let cursor=new Date(last);cursor.setMinutes(0,0,0);cursor=new Date(cursor.getTime()+3600000);
+  const mails=[];let made=0;
+  while(cursor<=thisHour && made<48){
+    const pet=pets[made%pets.length],gift=randomGift_();
+    mails.push({
+      '信件ID':'MAIL-'+Utilities.getUuid(),
+      '學號':id,
+      '時間':new Date(cursor),
+      '寄件者':String(pet['寵物ID']),
+      '標題':'整點小禮物',
+      '內容':'寵物在整點時替你帶回了一份禮物！',
+      '附件類型':'道具',
+      '附件ID':gift.itemId,
+      '附件數量':gift.qty,
+      '是否領取':false
+    });
+    made++;cursor=new Date(cursor.getTime()+3600000);
+  }
+  if(mails.length){
+    appendObjectsBatch_(SpreadsheetApp.getActive().getSheetByName(SHEETS.MAILBOX),mails);
+  }
+  f.sheet.getRange(f.row,col).setValue(thisHour);
+}
+
+/** 批次增加多種道具：學生道具只讀一次、寫一次。 */
+function addItemsBatch_(studentId,gifts){
+  const id=String(studentId).trim();
+  const sh=SpreadsheetApp.getActive().getSheetByName(SHEETS.STUDENT_ITEMS);
+  const hm=headerMapFast_(sh),lastCol=sh.getLastColumn();
+  const vals=sh.getLastRow()>=2?sh.getRange(2,1,sh.getLastRow()-1,lastCol).getValues():[];
+  const rowByItem={};
+  for(let i=0;i<vals.length;i++){
+    if(String(vals[i][hm['學號']-1]||'').trim()===id){
+      rowByItem[String(vals[i][hm['道具ID']-1]||'')]={index:i,row:i+2};
+    }
+  }
+  const appends=[];
+  Object.keys(gifts||{}).forEach(itemId=>{
+    const qty=Number(gifts[itemId]||0);if(qty<=0)return;
+    const found=rowByItem[itemId];
+    if(found){
+      vals[found.index][hm['數量']-1]=Number(vals[found.index][hm['數量']-1]||0)+qty;
+    }else{
+      appends.push({'學號':id,'道具ID':itemId,'數量':qty});
+    }
+  });
+  if(vals.length){
+    sh.getRange(2,1,vals.length,lastCol).setValues(vals);
+  }
+  if(appends.length)appendObjectsBatch_(sh,appends);
+}
+
+
 /** 工具 */
 function findStudentRow_(id){
   const sh=SpreadsheetApp.getActive().getSheetByName(SHEETS.STUDENTS), hm=headerMap_(sh), vals=sh.getDataRange().getValues();
@@ -815,7 +1054,7 @@ function safeForClient_(value){
 function normalizeDate_(v){ if(v instanceof Date) return Utilities.formatDate(v,TZ,'yyyy-MM-dd'); return String(v||'').replace(/\//g,'-').trim(); }
 function formatPetId_(n){ return 'PET'+String(Number(n)).padStart(3,'0'); }
 function normalizePetId_(v){ const m=String(v||'').match(/(\d+)/); return m?String(Number(m[1])):''; }
-function headerMap_(sh){ const h=sh.getRange(1,1,1,sh.getLastColumn()).getValues()[0], m={}; h.forEach((x,i)=>m[String(x).trim()]=i+1); return m; }
+function headerMap_(sh){ return headerMapFast_(sh); }
 function rowObject_(sh,row){ const h=sh.getRange(1,1,1,sh.getLastColumn()).getValues()[0], o={}; h.forEach((x,i)=>o[String(x).trim()]=row[i]); return o; }
 function readObjects_(sh){ if(!sh || sh.getLastRow()<2) return []; const v=sh.getDataRange().getValues(), h=v[0]; return v.slice(1).filter(r=>r.some(x=>x!=='' && x!=null)).map(r=>{const o={};h.forEach((x,i)=>o[String(x).trim()]=r[i]);return o;}); }
 function appendObject_(sh,obj){ const hm=headerMap_(sh), row=Array(sh.getLastColumn()).fill(''); Object.keys(obj).forEach(k=>{if(hm[k]) row[hm[k]-1]=obj[k];}); sh.appendRow(row); }
@@ -847,7 +1086,7 @@ function loginV55(studentId,birthdayMD){
   const sh=SpreadsheetApp.getActive().getSheetByName(SHEETS.STUDENTS),hm=headerMap_(sh),vals=sh.getDataRange().getValues(),wanted=normalizeMonthDay_(birthdayMD);
   for(let i=1;i<vals.length;i++){
     const id=String(vals[i][hm['學號']-1]||'').trim();
-    if(id===String(studentId).trim() && normalizeMonthDay_(vals[i][hm['生日']-1])===wanted && vals[i][hm['是否啟用']-1]!==false){ensureStarterData_(id);ensurePlotData_(id);return {ok:true,name:vals[i][hm['姓名']-1],version:APP_VERSION};}
+    if(id===String(studentId).trim() && normalizeMonthDay_(vals[i][hm['生日']-1])===wanted && vals[i][hm['是否啟用']-1]!==false){return {ok:true,name:vals[i][hm['姓名']-1],version:APP_VERSION};}
   }
   return {ok:false,message:'學號或生日（月/日）不正確'};
 }
@@ -867,21 +1106,150 @@ function ensurePlotData_(studentId){
   plots=readObjects_(ps).filter(x=>String(x['學號']).trim()===id);if(plots.length&&!plots.some(x=>x['是否使用']===true||String(x['是否使用']).toUpperCase()==='TRUE')){const hm=headerMap_(ps),vals=ps.getDataRange().getValues();for(let i=1;i<vals.length;i++)if(String(vals[i][hm['學號']-1]).trim()===id){ps.getRange(i+1,hm['是否使用']).setValue(true);break;}}
 }
 function getStudentCoreStateV55_(studentId){
-  const id=String(studentId||'').trim();ensureStarterData_(id);ensurePlotData_(id);const ss=SpreadsheetApp.getActive(),student=getStudent_(id);if(!student)return {ok:false,message:'找不到學生'};
+  const id=String(studentId||'').trim();ensureStudentReadyFast_(id);const ss=SpreadsheetApp.getActive(),student=getStudent_(id);if(!student)return {ok:false,message:'找不到學生'};
   const petCfg=cachedObjects_(SHEETS.PET_CONFIG,300),cfgMap={};petCfg.forEach(x=>cfgMap[String(x['寵物ID'])]=x);const pets=readObjects_(ss.getSheetByName(SHEETS.PETS)).filter(x=>String(x['學號']).trim()===id).map(p=>decoratePet_(p,cfgMap[String(p['寵物ID'])]||{}));
   const bgCfg=cachedObjects_(SHEETS.LANDS,300),bgMap={};bgCfg.forEach(x=>bgMap[String(x['土地ID'])]=x);let plots=readObjects_(ss.getSheetByName(SHEETS.STUDENT_PLOTS)).filter(x=>String(x['學號']).trim()===id);const active=plots.find(x=>x['是否使用']===true||String(x['是否使用']).toUpperCase()==='TRUE')||plots[0];const activeLandId=active?String(active['土地格ID']):'SLOT001';const lands=plots.map(x=>({'學號':id,'土地ID':String(x['土地格ID']),'土地序號':Number(x['土地序號']||1),'背景ID':String(x['背景ID']||'LAND001'),'是否使用':x['是否使用'],config:bgMap[String(x['背景ID']||'LAND001')]||{}}));
   const backgrounds=readObjects_(ss.getSheetByName(SHEETS.STUDENT_BACKGROUNDS)).filter(x=>String(x['學號']).trim()===id&&x['是否擁有']!==false).map(x=>String(x['背景ID']));
   const fMap=cachedMap_(SHEETS.FURNITURE,'家具ID',300);const furniture=readObjects_(ss.getSheetByName(SHEETS.STUDENT_FURNITURE)).filter(x=>String(x['學號']).trim()===id&&String(x['土地ID']||'SLOT001')===activeLandId).map(x=>({...x,config:fMap[String(x['家具ID'])]||{}}));
-  return safeForClient_({ok:true,version:APP_VERSION,student,pets,lands,backgrounds,activeLandId,furniture,unreadMail:getUnreadMailCount_(id),challengeStatus:getAllChallengeStatus_(id)});
+  return safeForClient_({ok:true,version:APP_VERSION,student,pets,lands,backgrounds,activeLandId,furniture,unreadMail:0,challengeStatus:{}});
 }
 function getStudentStateV55(studentId){const s=getStudentCoreStateV55_(studentId);if(!s.ok)return s;s.mailbox=getMailbox(studentId);s.inventory=getInventory(studentId);return safeForClient_(s);}
-function setActivePlotFastV55(studentId,slotId){const id=String(studentId).trim(),sh=SpreadsheetApp.getActive().getSheetByName(SHEETS.STUDENT_PLOTS),hm=headerMap_(sh),vals=sh.getDataRange().getValues();let found=false;for(let i=1;i<vals.length;i++){if(String(vals[i][hm['學號']-1]).trim()===id){const yes=String(vals[i][hm['土地格ID']-1])===String(slotId);sh.getRange(i+1,hm['是否使用']).setValue(yes);if(yes)found=true;}}if(!found)throw new Error('找不到土地');const fMap=cachedMap_(SHEETS.FURNITURE,'家具ID',300),furniture=readObjects_(SpreadsheetApp.getActive().getSheetByName(SHEETS.STUDENT_FURNITURE)).filter(x=>String(x['學號']).trim()===id&&String(x['土地ID'])===String(slotId)).map(x=>({...x,config:fMap[String(x['家具ID'])]||{}}));return safeForClient_({ok:true,activeLandId:String(slotId),furniture});}
-function buyPlotFast(studentId){const id=String(studentId).trim();ensurePlotData_(id);spendCoins_(id,LAND_SLOT_PRICE_V55);const sh=SpreadsheetApp.getActive().getSheetByName(SHEETS.STUDENT_PLOTS),rows=readObjects_(sh).filter(x=>String(x['學號']).trim()===id),n=rows.reduce((m,x)=>Math.max(m,Number(x['土地序號']||0)),0)+1,slot='SLOT'+String(n).padStart(3,'0');const bg=(readObjects_(SpreadsheetApp.getActive().getSheetByName(SHEETS.STUDENT_BACKGROUNDS)).find(x=>String(x['學號']).trim()===id&&x['是否擁有']!==false)||{})['背景ID']||'LAND001';appendObject_(sh,{'學號':id,'土地格ID':slot,'土地序號':n,'背景ID':bg,'是否使用':false,'購買時間':new Date()});const student=getStudent_(id);return {ok:true,coins:student.coins,plot:{'土地ID':slot,'土地序號':n,'背景ID':bg,'是否使用':false}};}
-function buyBackgroundFast(studentId,bgId){const id=String(studentId).trim();ensurePlotData_(id);const cfg=cachedObjects_(SHEETS.LANDS,300).find(x=>String(x['土地ID'])===String(bgId));if(!cfg)throw new Error('找不到背景');const sh=SpreadsheetApp.getActive().getSheetByName(SHEETS.STUDENT_BACKGROUNDS),rows=readObjects_(sh);if(!rows.some(x=>String(x['學號']).trim()===id&&String(x['背景ID'])===String(bgId)&&x['是否擁有']!==false)){spendCoins_(id,Number(cfg['價格']||0));appendObject_(sh,{'學號':id,'背景ID':bgId,'是否擁有':true,'購買時間':new Date()});}const student=getStudent_(id),backgrounds=readObjects_(sh).filter(x=>String(x['學號']).trim()===id&&x['是否擁有']!==false).map(x=>String(x['背景ID']));return {ok:true,coins:student.coins,backgrounds};}
-function setPlotBackgroundFast(studentId,slotId,bgId){const id=String(studentId).trim();ensurePlotData_(id);const own=readObjects_(SpreadsheetApp.getActive().getSheetByName(SHEETS.STUDENT_BACKGROUNDS)).some(x=>String(x['學號']).trim()===id&&String(x['背景ID'])===String(bgId)&&x['是否擁有']!==false);if(!own)throw new Error('尚未擁有這個背景');const sh=SpreadsheetApp.getActive().getSheetByName(SHEETS.STUDENT_PLOTS),hm=headerMap_(sh),vals=sh.getDataRange().getValues();for(let i=1;i<vals.length;i++)if(String(vals[i][hm['學號']-1]).trim()===id&&String(vals[i][hm['土地格ID']-1])===String(slotId)){sh.getRange(i+1,hm['背景ID']).setValue(bgId);return {ok:true};}throw new Error('找不到土地');}
+function setActivePlotFastV55(studentId,slotId){
+  const id=String(studentId).trim(),sh=SpreadsheetApp.getActive().getSheetByName(SHEETS.STUDENT_PLOTS);
+  const hm=headerMapFast_(sh),vals=sh.getDataRange().getValues();
+  const updates=[];let found=false;
+  for(let i=1;i<vals.length;i++){
+    if(String(vals[i][hm['學號']-1]).trim()!==id)continue;
+    const yes=String(vals[i][hm['土地格ID']-1])===String(slotId);
+    updates.push({row:i+1,value:yes});
+    if(yes)found=true;
+  }
+  if(!found)throw new Error('找不到土地');
+  updates.forEach(u=>sh.getRange(u.row,hm['是否使用']).setValue(u.value));
+  const fMap=cachedMap_(SHEETS.FURNITURE,'家具ID',300);
+  const furniture=readObjects_(SpreadsheetApp.getActive().getSheetByName(SHEETS.STUDENT_FURNITURE))
+    .filter(x=>String(x['學號']).trim()===id&&String(x['土地ID'])===String(slotId))
+    .map(x=>({...x,config:fMap[String(x['家具ID'])]||{}}));
+  return safeForClient_({ok:true,activeLandId:String(slotId),furniture});
+}
+function buyPlotFast(studentId){
+  const lock=LockService.getScriptLock();lock.waitLock(10000);
+  try{
+    const id=String(studentId).trim();ensurePlotData_(id);
+    spendCoins_(id,LAND_SLOT_PRICE_V55);
+    const ss=SpreadsheetApp.getActive(),sh=ss.getSheetByName(SHEETS.STUDENT_PLOTS);
+    const rows=readObjects_(sh).filter(x=>String(x['學號']).trim()===id);
+    const n=rows.reduce((m,x)=>Math.max(m,Number(x['土地序號']||0)),0)+1;
+    const slot='SLOT'+String(n).padStart(3,'0');
+    const bg=(readObjects_(ss.getSheetByName(SHEETS.STUDENT_BACKGROUNDS)).find(x=>String(x['學號']).trim()===id&&x['是否擁有']!==false)||{})['背景ID']||'LAND001';
+    appendObject_(sh,{'學號':id,'土地格ID':slot,'土地序號':n,'背景ID':bg,'是否使用':false,'購買時間':new Date()});
+    const student=getStudent_(id);
+    return {ok:true,coins:student.coins,plot:{'土地ID':slot,'土地序號':n,'背景ID':bg,'是否使用':false}};
+  }finally{lock.releaseLock();}
+}
+function buyBackgroundFast(studentId,bgId){
+  const lock=LockService.getScriptLock();lock.waitLock(10000);
+  try{
+    const id=String(studentId).trim();ensurePlotData_(id);
+    const ss=SpreadsheetApp.getActive();
+    const cfg=readObjects_(ss.getSheetByName(SHEETS.LANDS)).find(x=>String(x['土地ID'])===String(bgId));
+    if(!cfg)throw new Error('找不到背景');
+
+    const method=String(cfg['取得方式']||'金幣').trim();
+    if(method==='寶物'||method.includes('兌換'))throw new Error('這張背景只能使用寶物兌換');
+
+    const priceRaw=cfg['價格'];
+    const price=(priceRaw===''||priceRaw===null||priceRaw===undefined)?NaN:Number(priceRaw);
+    if(!Number.isFinite(price)||price<=0)throw new Error('這張背景尚未設定有效的金幣價格，已停止購買');
+
+    const bgSh=ss.getSheetByName(SHEETS.STUDENT_BACKGROUNDS), bgRows=readObjects_(bgSh);
+    const already=bgRows.some(x=>String(x['學號']).trim()===id&&String(x['背景ID'])===String(bgId)&&x['是否擁有']!==false);
+    if(already){
+      const s=getStudent_(id);
+      return {ok:true,alreadyOwned:true,coins:Number(s?.['金幣']||0),backgrounds:bgRows.filter(x=>String(x['學號']).trim()===id&&x['是否擁有']!==false).map(x=>String(x['背景ID']))};
+    }
+
+    const stuSh=ss.getSheetByName(SHEETS.STUDENTS),hm=headerMap_(stuSh),vals=stuSh.getDataRange().getValues();
+    for(let i=1;i<vals.length;i++){
+      if(String(vals[i][hm['學號']-1]).trim()===id){
+        const coins=Number(vals[i][hm['金幣']-1]||0);
+        if(coins<price)throw new Error('金幣不足');
+        stuSh.getRange(i+1,hm['金幣']).setValue(coins-price);
+        appendObject_(bgSh,{'學號':id,'背景ID':bgId,'是否擁有':true,'購買時間':new Date()});
+        const backgrounds=readObjects_(bgSh).filter(x=>String(x['學號']).trim()===id&&x['是否擁有']!==false).map(x=>String(x['背景ID']));
+        return {ok:true,coins:coins-price,backgrounds:[...new Set(backgrounds)]};
+      }
+    }
+    throw new Error('找不到學生');
+  }finally{lock.releaseLock();}
+}
+
+function redeemBackgroundFast(studentId,bgId){
+  const lock=LockService.getScriptLock();lock.waitLock(10000);
+  try{
+    const id=String(studentId).trim();ensurePlotData_(id);
+    const ss=SpreadsheetApp.getActive();
+    const cfg=readObjects_(ss.getSheetByName(SHEETS.LANDS)).find(x=>String(x['土地ID'])===String(bgId));
+    if(!cfg)throw new Error('找不到背景');
+    const method=String(cfg['取得方式']||'金幣');
+    if(!(method.includes('寶物')||method.includes('兌換')))throw new Error('這張背景不是寶物兌換背景');
+    const itemId=String(cfg['兌換道具ID']||'').trim(), need=Math.max(1,Number(cfg['兌換數量']||0));
+    if(!itemId)throw new Error('尚未設定兌換道具ID');
+
+    const bgSh=ss.getSheetByName(SHEETS.STUDENT_BACKGROUNDS), bgRows=readObjects_(bgSh);
+    const already=bgRows.some(x=>String(x['學號']).trim()===id&&String(x['背景ID'])===String(bgId)&&x['是否擁有']!==false);
+    if(already)return {ok:true,alreadyOwned:true,backgrounds:bgRows.filter(x=>String(x['學號']).trim()===id&&x['是否擁有']!==false).map(x=>String(x['背景ID'])),inventory:getInventory(id)};
+
+    const itemSh=ss.getSheetByName(SHEETS.STUDENT_ITEMS), hm=headerMap_(itemSh), vals=itemSh.getDataRange().getValues();
+    let row=-1,have=0;
+    for(let i=1;i<vals.length;i++){
+      if(String(vals[i][hm['學號']-1]).trim()===id&&String(vals[i][hm['道具ID']-1])===itemId){
+        row=i+1;have=Number(vals[i][hm['數量']-1]||0);break;
+      }
+    }
+    if(row<0||have<need)throw new Error('寶物數量不足');
+    itemSh.getRange(row,hm['數量']).setValue(have-need);
+    appendObject_(bgSh,{'學號':id,'背景ID':bgId,'是否擁有':true,'購買時間':new Date()});
+    const backgrounds=readObjects_(bgSh).filter(x=>String(x['學號']).trim()===id&&x['是否擁有']!==false).map(x=>String(x['背景ID']));
+    return {ok:true,backgrounds:[...new Set(backgrounds)],inventory:getInventory(id),spentItemId:itemId,spentQty:need};
+  }finally{lock.releaseLock();}
+}
+
+function setPlotBackgroundFast(studentId,slotId,bgId){
+  const lock=LockService.getScriptLock();lock.waitLock(10000);
+  try{
+    const id=String(studentId).trim();ensurePlotData_(id);const ss=SpreadsheetApp.getActive();
+    const own=readObjects_(ss.getSheetByName(SHEETS.STUDENT_BACKGROUNDS)).some(x=>String(x['學號']).trim()===id&&String(x['背景ID'])===String(bgId)&&x['是否擁有']!==false);
+    if(!own)throw new Error('尚未擁有這個背景');
+    const sh=ss.getSheetByName(SHEETS.STUDENT_PLOTS),hm=headerMap_(sh),vals=sh.getDataRange().getValues();
+    for(let i=1;i<vals.length;i++)if(String(vals[i][hm['學號']-1]).trim()===id&&String(vals[i][hm['土地格ID']-1])===String(slotId)){sh.getRange(i+1,hm['背景ID']).setValue(bgId);SpreadsheetApp.flush();return {ok:true,backgroundId:String(bgId)};}
+    throw new Error('找不到土地');
+  }finally{lock.releaseLock();}
+}
 function movePetToLandV55(studentId,petId,slotId){const id=String(studentId).trim();const own=readObjects_(SpreadsheetApp.getActive().getSheetByName(SHEETS.STUDENT_PLOTS)).some(x=>String(x['學號']).trim()===id&&String(x['土地格ID'])===String(slotId));if(!own)throw new Error('尚未擁有這塊土地');const sh=SpreadsheetApp.getActive().getSheetByName(SHEETS.PETS),hm=headerMap_(sh),vals=sh.getDataRange().getValues();for(let i=1;i<vals.length;i++)if(String(vals[i][hm['學號']-1]).trim()===id&&String(vals[i][hm['寵物ID']-1])===String(petId)){sh.getRange(i+1,hm['土地ID']).setValue(slotId);return true;}throw new Error('找不到寵物');}
 
-function claimAllMailFast(studentId){const id=String(studentId).trim(),sh=SpreadsheetApp.getActive().getSheetByName(SHEETS.MAILBOX),hm=headerMap_(sh),vals=sh.getDataRange().getValues(),gifts={};const rows=[];for(let i=1;i<vals.length;i++){if(String(vals[i][hm['學號']-1]).trim()!==id)continue;const claimed=vals[i][hm['是否領取']-1]===true||String(vals[i][hm['是否領取']-1]).toUpperCase()==='TRUE';if(claimed)continue;const aid=String(vals[i][hm['附件ID']-1]||''),qty=Number(vals[i][hm['附件數量']-1]||0),type=String(vals[i][hm['附件類型']-1]||'');if(type==='道具'&&aid&&qty>0)gifts[aid]=(gifts[aid]||0)+qty;rows.push(i+1);}Object.keys(gifts).forEach(k=>addItem_(id,k,gifts[k]));rows.forEach(r=>sh.getRange(r,hm['是否領取']).setValue(true));return {ok:true,mailbox:getMailbox(id),inventory:getInventory(id),unreadMail:0};}
+function claimAllMailFast(studentId){
+  const id=String(studentId).trim();
+  const sh=SpreadsheetApp.getActive().getSheetByName(SHEETS.MAILBOX);
+  const hm=headerMapFast_(sh);
+  if(sh.getLastRow()<2)return {ok:true,mailbox:[],inventory:getInventory(id),unreadMail:0};
+
+  const vals=sh.getRange(2,1,sh.getLastRow()-1,sh.getLastColumn()).getValues();
+  const gifts={},rowA1=[];
+  for(let i=0;i<vals.length;i++){
+    if(String(vals[i][hm['學號']-1]||'').trim()!==id)continue;
+    const claimed=vals[i][hm['是否領取']-1]===true||String(vals[i][hm['是否領取']-1]).toUpperCase()==='TRUE';
+    if(claimed)continue;
+    const aid=String(vals[i][hm['附件ID']-1]||'');
+    const qty=Number(vals[i][hm['附件數量']-1]||0);
+    const type=String(vals[i][hm['附件類型']-1]||'');
+    if(type==='道具'&&aid&&qty>0)gifts[aid]=(gifts[aid]||0)+qty;
+    rowA1.push(sh.getRange(i+2,hm['是否領取']).getA1Notation());
+  }
+  addItemsBatch_(id,gifts);
+  if(rowA1.length)sh.getRangeList(rowA1).setValue(true);
+  return {ok:true,mailbox:getMailboxFast_(id),inventory:getInventory(id),unreadMail:0};
+}
 
 function getAdminPassword_(){return String(PropertiesService.getScriptProperties().getProperty('ADMIN_PASSWORD')||'');}
 function verifyAdminPassword_(password){const expected=getAdminPassword_();if(!expected)throw new Error('尚未設定 ADMIN_PASSWORD。請到 Apps Script 專案設定的「指令碼屬性」新增 ADMIN_PASSWORD。');if(String(password)!==expected)throw new Error('老師密碼錯誤');return true;}
@@ -890,6 +1258,274 @@ function getAdminDataSecure(password){verifyAdminPassword_(password);return getA
 function adminAddCoins(password,studentId,amount,reason){verifyAdminPassword_(password);return addCoins(studentId,amount,reason);}
 function adminGrantItem(password,studentId,itemId,quantity,reason){verifyAdminPassword_(password);return grantItem(studentId,itemId,quantity,reason);}
 function adminAssignPet(password,studentId,petId){verifyAdminPassword_(password);return assignPetToStudent(studentId,petId);}
+
+
+function ensureHeaders_(sh,headers){
+  const current=sh.getLastColumn()?sh.getRange(1,1,1,sh.getLastColumn()).getValues()[0]:[];
+  headers.forEach(h=>{
+    if(!current.includes(h)){sh.getRange(1,sh.getLastColumn()+1).setValue(h);current.push(h);}
+  });
+}
+
+function setupOrUpgradeV56(){
+  setupOrUpgradeV55();
+  const sh=SpreadsheetApp.getActive().getSheetByName(SHEETS.LANDS);
+  ensureHeaders_(sh,['取得方式','兌換道具ID','兌換數量']);
+  const hm=headerMap_(sh), vals=sh.getDataRange().getValues();
+  for(let i=1;i<vals.length;i++){
+    if(!vals[i][hm['土地ID']-1])continue;
+    if(!vals[i][hm['取得方式']-1]) sh.getRange(i+1,hm['取得方式']).setValue('金幣');
+  }
+  clearGameConfigCache();
+  return 'V5.6 升級完成';
+}
+
+
+function setupOrUpgradeV561(){
+  setupOrUpgradeV56();
+  const sh=SpreadsheetApp.getActive().getSheetByName(SHEETS.LANDS);
+  ensureHeaders_(sh,['取得方式','兌換道具ID','兌換數量']);
+  // 僅補空白取得方式為「金幣」；價格空白就維持空白，前後端都會阻止 0 元購買。
+  const hm=headerMap_(sh),vals=sh.getDataRange().getValues();
+  for(let i=1;i<vals.length;i++){
+    if(!vals[i][hm['土地ID']-1])continue;
+    if(!vals[i][hm['取得方式']-1])sh.getRange(i+1,hm['取得方式']).setValue('金幣');
+  }
+  clearGameConfigCache();
+  return 'V5.6.1 升級完成';
+}
+
+
+/** ====================== V5.6.2 試算表下拉選單 / 勾選框 ====================== **/
+function setupOrUpgradeV562(){
+  setupOrUpgradeV561();
+  setupSpreadsheetControlsV562_();
+  clearGameConfigCache();
+  return 'V5.6.2 升級完成：已建立下拉選單與勾選框';
+}
+
+function setupSpreadsheetControlsV562_(){
+  const ss=SpreadsheetApp.getActive();
+
+  // 共用工具
+  const listRule_ = values => SpreadsheetApp.newDataValidation()
+    .requireValueInList(values, true)
+    .setAllowInvalid(false)
+    .build();
+
+  const rangeRule_ = range => SpreadsheetApp.newDataValidation()
+    .requireValueInRange(range, true)
+    .setAllowInvalid(false)
+    .build();
+
+  const applyList_ = (sheetName, header, values, maxRows=1000) => {
+    const sh=ss.getSheetByName(sheetName);
+    if(!sh)return;
+    const hm=headerMap_(sh);
+    const col=hm[header];
+    if(!col)return;
+    sh.getRange(2,col,Math.max(1,maxRows-1),1).setDataValidation(listRule_(values));
+  };
+
+  const applyRange_ = (sheetName, header, sourceRange, maxRows=1000) => {
+    const sh=ss.getSheetByName(sheetName);
+    if(!sh)return;
+    const hm=headerMap_(sh);
+    const col=hm[header];
+    if(!col)return;
+    sh.getRange(2,col,Math.max(1,maxRows-1),1).setDataValidation(rangeRule_(sourceRange));
+  };
+
+  const applyCheckbox_ = (sheetName, header, maxRows=1000) => {
+    const sh=ss.getSheetByName(sheetName);
+    if(!sh)return;
+    const hm=headerMap_(sh);
+    const col=hm[header];
+    if(!col)return;
+    sh.getRange(2,col,Math.max(1,maxRows-1),1).insertCheckboxes();
+  };
+
+  // 1. 學生資料
+  applyCheckbox_(SHEETS.STUDENTS,'是否啟用');
+
+  // 2. 學生寵物
+  applyCheckbox_(SHEETS.PETS,'是否目前顯示');
+
+  // 3. 寵物設定
+  applyCheckbox_(SHEETS.PET_CONFIG,'是否開放');
+  applyList_(SHEETS.PET_CONFIG,'移動類型',['地面型','天空型']);
+
+  // 4. 土地 / 背景設定
+  applyCheckbox_(SHEETS.LANDS,'是否開放');
+  applyList_(SHEETS.LANDS,'取得方式',['金幣','寶物']);
+
+  // 兌換道具 ID 直接從「道具設定」A欄選，避免打錯 TRE001 / TRE002。
+  const itemSh=ss.getSheetByName(SHEETS.ITEM_CONFIG);
+  if(itemSh){
+    const itemHm=headerMap_(itemSh);
+    const itemIdCol=itemHm['道具ID'];
+    if(itemIdCol){
+      const sourceRange=itemSh.getRange(2,itemIdCol,Math.max(1,itemSh.getMaxRows()-1),1);
+      applyRange_(SHEETS.LANDS,'兌換道具ID',sourceRange);
+    }
+  }
+
+  // 5. 學生土地
+  applyCheckbox_(SHEETS.STUDENT_LANDS,'是否擁有');
+  applyCheckbox_(SHEETS.STUDENT_LANDS,'是否使用');
+
+  // 6. 家具設定
+  applyCheckbox_(SHEETS.FURNITURE,'是否開放');
+
+  // 7. 道具設定
+  applyList_(SHEETS.ITEM_CONFIG,'類型',['經驗型','寶物型']);
+  applyCheckbox_(SHEETS.ITEM_CONFIG,'是否開放');
+
+  // 8. 信箱
+  applyList_(SHEETS.MAILBOX,'附件類型',['道具']);
+  applyCheckbox_(SHEETS.MAILBOX,'是否領取');
+
+  // 9. 挑戰題庫
+  applyList_(SHEETS.QUESTIONS,'科目',['國語','數學','英文','自然','社會']);
+  applyList_(SHEETS.QUESTIONS,'題型',['選擇題','是非題']);
+  applyCheckbox_(SHEETS.QUESTIONS,'是否啟用');
+
+  // 10. V5.5 / V5.6 新增表
+  if(SHEETS.STUDENT_PLOTS){
+    applyCheckbox_(SHEETS.STUDENT_PLOTS,'是否使用');
+  }
+  if(SHEETS.STUDENT_BACKGROUNDS){
+    applyCheckbox_(SHEETS.STUDENT_BACKGROUNDS,'是否擁有');
+  }
+
+  // 美化：固定標題列，避免大量資料往下滑時看不到欄名。
+  [
+    SHEETS.STUDENTS,SHEETS.PETS,SHEETS.PET_CONFIG,SHEETS.LANDS,
+    SHEETS.STUDENT_LANDS,SHEETS.FURNITURE,SHEETS.STUDENT_FURNITURE,
+    SHEETS.ITEM_CONFIG,SHEETS.STUDENT_ITEMS,SHEETS.MAILBOX,
+    SHEETS.QUESTIONS,SHEETS.CHALLENGES,SHEETS.REWARDS,
+    SHEETS.STUDENT_PLOTS,SHEETS.STUDENT_BACKGROUNDS
+  ].filter(Boolean).forEach(name=>{
+    const sh=ss.getSheetByName(name);
+    if(sh)sh.setFrozenRows(1);
+  });
+}
+
+
+function setupOrUpgradeV57(){
+  setupOrUpgradeV562();
+  const ss=SpreadsheetApp.getActive();
+  const sh=ensureSheet_(SHEETS.MONSTERS,['怪物ID','名稱','圖片','基礎HP','HP成長','出現科目','是否開放']);
+
+  // 預設放一隻陽春怪物，之後可自行刪除或修改。
+  if(sh.getLastRow()<2){
+    sh.appendRow(['MON001','訓練史萊姆','',100,25,'全部',true]);
+  }
+
+  // 下拉選單 / 勾選框
+  const hm=headerMap_(sh);
+  if(hm['出現科目']){
+    sh.getRange(2,hm['出現科目'],Math.max(1,sh.getMaxRows()-1),1)
+      .setDataValidation(
+        SpreadsheetApp.newDataValidation()
+          .requireValueInList(['全部','國語','數學','英文','自然','社會'],true)
+          .setAllowInvalid(false)
+          .build()
+      );
+  }
+  if(hm['是否開放']){
+    sh.getRange(2,hm['是否開放'],Math.max(1,sh.getMaxRows()-1),1).insertCheckboxes();
+  }
+  sh.setFrozenRows(1);
+  clearGameConfigCache();
+  return 'V5.7 升級完成：已新增怪物設定';
+}
+
+function getMonsterCatalogFresh(){
+  const sh=SpreadsheetApp.getActive().getSheetByName(SHEETS.MONSTERS);
+  if(!sh)return [];
+  const rows=readObjects_(sh).filter(x=>x['是否開放']!==false);
+  return safeForClient_(rows.map(x=>({
+    monsterId:String(x['怪物ID']||''),
+    name:String(x['名稱']||x['怪物ID']||'怪物'),
+    image:String(x['圖片']||''),
+    baseHp:Number(x['基礎HP']||100),
+    hpGrowth:Number(x['HP成長']||25),
+    subject:String(x['出現科目']||'全部'),
+    enabled:x['是否開放']!==false
+  })));
+}
+
+
+function setupOrUpgradeV59(){
+  setupOrUpgradeV57();
+  const ss=SpreadsheetApp.getActive();
+  const attrs=['光','地','暗','草','水','毒','火','電','冰','風','鋼','混沌'];
+
+  const qsh=ss.getSheetByName(SHEETS.QUESTIONS);
+  ensureHeaders_(qsh,['單元','圖片ID','圖片路徑']);
+
+  const petCfg=ss.getSheetByName(SHEETS.PET_CONFIG);
+  ensureHeaders_(petCfg,['屬性']);
+  const ph=headerMap_(petCfg);
+  petCfg.getRange(2,ph['屬性'],Math.max(1,petCfg.getMaxRows()-1),1)
+    .setDataValidation(SpreadsheetApp.newDataValidation().requireValueInList(attrs,true).setAllowInvalid(false).build());
+
+  const bg=ensureSheet_(SHEETS.BATTLE_BACKGROUNDS,['背景ID','名稱','圖片','適用科目','是否開放']);
+  const bh=headerMap_(bg);
+  bg.getRange(2,bh['適用科目'],Math.max(1,bg.getMaxRows()-1),1)
+    .setDataValidation(SpreadsheetApp.newDataValidation().requireValueInList(['全部','國語','數學','英文','自然','社會'],true).setAllowInvalid(false).build());
+  bg.getRange(2,bh['是否開放'],Math.max(1,bg.getMaxRows()-1),1).insertCheckboxes();
+
+  const pb=ensureSheet_(SHEETS.PET_BATTLE,['寵物代碼','屬性','專屬技能','專屬技能傷害']);
+  const pbh=headerMap_(pb);
+  pb.getRange(2,pbh['屬性'],Math.max(1,pb.getMaxRows()-1),1)
+    .setDataValidation(SpreadsheetApp.newDataValidation().requireValueInList(attrs,true).setAllowInvalid(false).build());
+  if(ph['寵物ID']){
+    const src=petCfg.getRange(2,ph['寵物ID'],Math.max(1,petCfg.getMaxRows()-1),1);
+    pb.getRange(2,pbh['寵物代碼'],Math.max(1,pb.getMaxRows()-1),1)
+      .setDataValidation(SpreadsheetApp.newDataValidation().requireValueInRange(src,true).setAllowInvalid(false).build());
+  }
+
+  if(pb.getLastRow()<2){
+    const pets=readObjects_(petCfg).filter(x=>String(x['寵物ID']||'').trim());
+    if(pets.length){
+      const rows=pets.map(x=>[String(x['寵物ID']),String(x['屬性']||'光'),'','']);
+      pb.getRange(2,1,rows.length,4).setValues(rows);
+    }
+  }
+
+  petCfg.setFrozenRows(1);bg.setFrozenRows(1);pb.setFrozenRows(1);
+  clearGameConfigCache();
+  try{CacheService.getScriptCache().remove('FAST_PET_BATTLE');}catch(e){}
+  return 'V5.9.2 升級完成：技能表已簡化';
+}
+function setupOrUpgradeV592(){ return setupOrUpgradeV59(); }
+function setupOrUpgradeV593(){ const r=setupOrUpgradeV59(); clearGameConfigCache(); return 'V5.9.3 升級完成：挑戰題庫已支援圖片'; }
+function setupOrUpgradeV594(){ const r=setupOrUpgradeV593(); clearGameConfigCache(); return 'V5.9.4 升級完成：題目圖片路徑已加強'; }
+
+function getBattleBackgroundCatalogFast(){
+  const c=CacheService.getScriptCache(),key='FAST_BATTLE_BG';
+  const hit=c.get(key);if(hit){try{return JSON.parse(hit);}catch(e){}}
+  const sh=SpreadsheetApp.getActive().getSheetByName(SHEETS.BATTLE_BACKGROUNDS);
+  const rows=!sh?[]:readObjects_(sh).filter(x=>x['是否開放']!==false).map(x=>({
+    bgId:String(x['背景ID']||''),name:String(x['名稱']||x['背景ID']||''),image:String(x['圖片']||''),subject:String(x['適用科目']||'全部'),enabled:x['是否開放']!==false
+  }));
+  try{c.put(key,JSON.stringify(rows),300);}catch(e){}
+  return safeForClient_(rows);
+}
+function getPetBattleConfigFast(){
+  const c=CacheService.getScriptCache(),key='FAST_PET_BATTLE';
+  const hit=c.get(key);if(hit){try{return JSON.parse(hit);}catch(e){}}
+  const sh=SpreadsheetApp.getActive().getSheetByName(SHEETS.PET_BATTLE);
+  if(!sh)return [];
+  const rows=readObjects_(sh).filter(x=>String(x['寵物代碼']||'').trim()).map(x=>({
+    petId:String(x['寵物代碼']||''),attribute:String(x['屬性']||'光'),specialName:String(x['專屬技能']||''),specialDamage:Number(x['專屬技能傷害']||0)
+  }));
+  try{c.put(key,JSON.stringify(rows),300);}catch(e){}
+  return safeForClient_(rows);
+}
+
 /** ====================== /V5.5 ======================== */
 
 /**
@@ -897,6 +1533,153 @@ function adminAssignPet(password,studentId,petId){verifyAdminPassword_(password)
  * 部署方式：執行身分=我；存取權=任何人。
  * 前端以 text/plain POST，避免瀏覽器 OPTIONS preflight。
  */
+
+/** ======================== V5.9.6 HIGH SPEED ======================== */
+
+/** 快速登入：只驗證學生，不讀寵物/土地/信箱/題庫。 */
+function loginFastV596(studentId,birthdayMD){
+  const id=String(studentId||'').trim(), wanted=normalizeMonthDay_(birthdayMD);
+  const c=CacheService.getScriptCache(), key='AUTH_STUDENTS_V596';
+  let rows=null, hit=c.get(key);
+  if(hit){try{rows=JSON.parse(hit);}catch(e){}}
+  if(!rows){
+    const sh=SpreadsheetApp.getActive().getSheetByName(SHEETS.STUDENTS),hm=headerMapFast_(sh),vals=sh.getDataRange().getValues();
+    rows=[];
+    for(let i=1;i<vals.length;i++){
+      rows.push({
+        id:String(vals[i][hm['學號']-1]||'').trim(),
+        name:String(vals[i][hm['姓名']-1]||''),
+        birthday:normalizeMonthDay_(vals[i][hm['生日']-1]),
+        enabled:vals[i][hm['是否啟用']-1]!==false,
+        coins:Number(vals[i][hm['金幣']-1]||0)
+      });
+    }
+    try{c.put(key,JSON.stringify(rows),600);}catch(e){}
+  }
+  const s=rows.find(x=>x.id===id && x.birthday===wanted && x.enabled);
+  if(!s)return {ok:false,message:'學號或生日（月/日）不正確'};
+  return safeForClient_({
+    ok:true,name:s.name,coins:s.coins,version:APP_VERSION,
+    state:{ok:true,version:APP_VERSION,student:{id:id,name:s.name,coins:s.coins},pets:[],lands:[],backgrounds:[],activeLandId:'',furniture:[],unreadMail:0,challengeStatus:{}}
+  });
+}
+
+/** 題庫一次轉成五科 JSON，CacheService 10 分鐘。 */
+function getQuestionBankBundleFast(){
+  const c=CacheService.getScriptCache(),key='QUESTION_BANK_V596';
+  const hit=c.get(key);if(hit){try{return JSON.parse(hit);}catch(e){}}
+  const out={'國語':[],'數學':[],'英文':[],'自然':[],'社會':[]};
+  const rows=cachedObjects_(SHEETS.QUESTIONS,600)
+    .filter(x=>x['是否啟用']!==false && String(x['是否啟用']).toUpperCase()!=='FALSE');
+  rows.forEach(x=>{
+    const s=String(x['科目']||'');if(!out[s])return;
+    const qi=resolveQuestionImage_(x);
+    out[s].push({
+      id:String(x['題目ID']),subject:s,unit:String(x['單元']||''),type:String(x['題型']||'選擇題'),text:String(x['題目']||''),
+      options:[x['選項A'],x['選項B'],x['選項C'],x['選項D']].filter(v=>v!==''&&v!=null),
+      answer:String(x['答案']||''),explanation:String(x['解析']||''),
+      imageId:qi.imageId,image:qi.image
+    });
+  });
+  try{c.put(key,JSON.stringify(out),600);}catch(e){}
+  return safeForClient_(out);
+}
+
+/** 只讀挑戰狀態，不建立紀錄。 */
+function getAllChallengeStatusFastV596(studentId){
+  const id=String(studentId||'').trim(),period=challengePeriodKey_(new Date()),subjects=['國語','數學','英文','自然','社會'];
+  const rows=readObjects_(SpreadsheetApp.getActive().getSheetByName(SHEETS.CHALLENGES))
+    .filter(x=>String(x['週期'])===period && String(x['學號']).trim()===id);
+  const out={};
+  subjects.forEach(s=>{
+    const r=rows.find(x=>String(x['科目'])===s);
+    out[s]=r?challengeStatusFromObj_(r):{correct:0,wrong:0,exp:0,locked:false};
+  });
+  return out;
+}
+
+/** 登入後背景只打一支 API：完整小屋 + 共用設定 + 題庫 + 挑戰狀態。 */
+function getPostLoginBundleV596(studentId){
+  const id=String(studentId||'').trim();
+  // 不在這裡補整點禮物，避免登入後背景載入被 mailbox 寫入拖慢；
+  // 原有 45 秒背景信箱更新仍會補禮物。
+  const core=getStudentCoreStateV55_(id);
+  const runtime=safeForClient_({
+    mailbox:getMailboxFast_(id),
+    unreadMail:getUnreadMailCountFast_(id),
+    inventory:getInventory(id),
+    backgrounds:getBackgroundCatalogCached_(),
+    monsters:getMonsterCatalogCached_(),
+    battleBackgrounds:getBattleBackgroundCatalogFast(),
+    petBattleConfigs:getPetBattleConfigFast()
+  });
+  return safeForClient_({
+    core:core,
+    runtime:runtime,
+    questionBank:getQuestionBankBundleFast(),
+    challengeStatus:getAllChallengeStatusFastV596(id)
+  });
+}
+
+/** 老師發道具：以 row cache 直接定位，不再每次額外讀學生資料。 */
+function adminGrantItemFast(password,studentId,itemId,quantity,reason){
+  verifyAdminPassword_(password);
+  const id=String(studentId||'').trim(), iid=String(itemId||'').trim(), qty=Math.max(1,Number(quantity||1));
+  const ss=SpreadsheetApp.getActive(),sh=ss.getSheetByName(SHEETS.STUDENT_ITEMS),hm=headerMapFast_(sh);
+  const c=CacheService.getScriptCache(),ck='ITEMROW_V596:'+id+':'+iid;
+  let row=Number(c.get(ck)||0), current=0;
+
+  if(row>1 && row<=sh.getLastRow()){
+    const vals=sh.getRange(row,1,1,sh.getLastColumn()).getValues()[0];
+    if(String(vals[hm['學號']-1]).trim()===id && String(vals[hm['道具ID']-1])===iid){
+      current=Number(vals[hm['數量']-1]||0);
+    }else row=0;
+  }
+  if(!row){
+    const vals=sh.getDataRange().getValues();
+    for(let i=1;i<vals.length;i++){
+      if(String(vals[i][hm['學號']-1]).trim()===id && String(vals[i][hm['道具ID']-1])===iid){
+        row=i+1;current=Number(vals[i][hm['數量']-1]||0);break;
+      }
+    }
+  }
+  if(row){
+    sh.getRange(row,hm['數量']).setValue(current+qty);
+  }else{
+    row=sh.getLastRow()+1;
+    const newRow=Array(sh.getLastColumn()).fill('');
+    newRow[hm['學號']-1]=id;newRow[hm['道具ID']-1]=iid;newRow[hm['數量']-1]=qty;
+    sh.getRange(row,1,1,newRow.length).setValues([newRow]);
+  }
+  try{c.put(ck,String(row),21600);}catch(e){}
+
+  // 獎勵紀錄只寫一列，不再先 getStudent_。
+  const rewards=ss.getSheetByName(SHEETS.REWARDS),rhm=headerMapFast_(rewards);
+  const rr=Array(rewards.getLastColumn()).fill('');
+  if(rhm['時間'])rr[rhm['時間']-1]=new Date();
+  if(rhm['學號'])rr[rhm['學號']-1]=id;
+  if(rhm['原因'])rr[rhm['原因']-1]=(reason||'老師發放')+'：'+iid+' ×'+qty;
+  // 相容舊獎勵表：找不到表頭時才用既有 6 欄排列。
+  if(!rhm['學號'] && rewards.getLastColumn()>=6){
+    rr[0]=new Date();rr[1]=id;rr[5]=(reason||'老師發放')+'：'+iid+' ×'+qty;
+  }
+  rewards.getRange(rewards.getLastRow()+1,1,1,rr.length).setValues([rr]);
+  return {ok:true,itemId:iid,quantity:current+qty};
+}
+
+/** V5.9.6 精簡 setup：不再連鎖 V593/V59/V57。 */
+function setupOrUpgradeV596(){
+  const ss=SpreadsheetApp.getActive();
+  const qsh=ss.getSheetByName(SHEETS.QUESTIONS);
+  if(qsh)ensureHeaders_(qsh,['單元','圖片ID','圖片路徑']);
+  try{
+    const c=CacheService.getScriptCache();
+    ['AUTH_STUDENTS_V596','QUESTION_BANK_V596','FAST_BG_CATALOG','FAST_MONSTER_CATALOG','FAST_BATTLE_BG','FAST_PET_BATTLE'].forEach(k=>c.remove(k));
+  }catch(e){}
+  try{clearGameConfigCache();}catch(e){}
+  return 'V5.9.6 高速版升級完成';
+}
+
 function doPost(e) {
   try {
     const raw = e && e.postData ? e.postData.contents : '';
@@ -908,13 +1691,23 @@ function doPost(e) {
       login: login,
       loginBootstrap: loginBootstrap,
       loginCore: loginCoreV55,
+      loginFastV596: loginFastV596,
       getStudentState: getStudentStateV55,
       getInventory: getInventory,
       getShop: getShop,
+      getBackgroundCatalogFresh: getBackgroundCatalogFresh,
+      getBackgroundCatalogFast: getBackgroundCatalogFast,
+      getRuntimeBundleFast: getRuntimeBundleFast,
+      getPostLoginBundleV596: getPostLoginBundleV596,
+      getQuestionBankBundleFast: getQuestionBankBundleFast,
+      getMonsterCatalogFresh: getMonsterCatalogCached_,
+      getBattleBackgroundCatalogFast: getBattleBackgroundCatalogFast,
+      getPetBattleConfigFast: getPetBattleConfigFast,
       setActiveLandFast: setActivePlotFastV55,
       buyLandFast: buyPlotFast,
       buyPlotFast: buyPlotFast,
       buyBackgroundFast: buyBackgroundFast,
+      redeemBackgroundFast: redeemBackgroundFast,
       setPlotBackgroundFast: setPlotBackgroundFast,
       movePetToLand: movePetToLandV55,
       useExpItem: useExpItem,
@@ -931,6 +1724,7 @@ function doPost(e) {
       getAdminDataSecure: getAdminDataSecure,
       adminAddCoins: adminAddCoins,
       adminGrantItem: adminGrantItem,
+      adminGrantItemFast: adminGrantItemFast,
       adminAssignPet: adminAssignPet
     };
 
