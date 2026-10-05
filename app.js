@@ -1,4 +1,4 @@
-const FRONTEND_BUILD='20261005-1900';
+const FRONTEND_BUILD='20261005-2030';
 const BUILTIN_LAND_BACKGROUNDS = {
   'LAND001': 'assets/maps/grassland.png',
   'LAND002': 'assets/maps/forest.png',
@@ -179,6 +179,11 @@ async function refreshLiveLandCatalog(forceRender=false){
 let currentId='',state=null,currentTab='home',mainMode='home',wanderTimer=null,inventory=[],mailbox=[],shop=null,adminData=null,challenge={subject:'',petId:'',question:null};
 let mailboxLoaded=false,mailboxAt=0,mailRefreshPromise=null,backgroundMailTimer=null;
 const CLIENT_CACHE={shop:null,shopAt:0,inventory:null,inventoryAt:0};
+const QUESTION_BANK_CACHE={};
+let POST_LOGIN_LOADING=null;
+let QUESTION_BANK_READY=false;
+let adminBusyItem=new Set();
+
 function cacheFresh(ts,ms=300000){return Date.now()-ts<ms;}
 
 const LOCAL_TTL=24*60*60*1000;
@@ -207,6 +212,67 @@ function hydrateLocalStudentCache(){
     LIVE_LAND_CONFIGS=Object.fromEntries(lc.map(r=>[String(r.landId),r]));
     liveLandCatalogAt=Date.now();
   }
+}
+
+function shuffleCopy(arr){
+  const a=[...(arr||[])];
+  for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}
+  return a;
+}
+function installQuestionBank(bundle){
+  if(!bundle || typeof bundle!=='object')return;
+  ['國語','數學','英文','自然','社會'].forEach(s=>{
+    if(Array.isArray(bundle[s]))QUESTION_BANK_CACHE[s]=bundle[s];
+  });
+  QUESTION_BANK_READY=Object.keys(QUESTION_BANK_CACHE).some(k=>Array.isArray(QUESTION_BANK_CACHE[k])&&QUESTION_BANK_CACHE[k].length);
+}
+function localQuestionBatch(subject,excludeIds=[],limit=30){
+  const src=QUESTION_BANK_CACHE[String(subject)]||[];
+  if(!src.length)return [];
+  const ex=new Set((excludeIds||[]).map(String));
+  let pool=src.filter(q=>!ex.has(String(q.id)));
+  if(!pool.length)pool=[...src];
+  return shuffleCopy(pool).slice(0,Math.max(1,limit));
+}
+async function ensureQuestionBank(subject){
+  if(Array.isArray(QUESTION_BANK_CACHE[subject]) && QUESTION_BANK_CACHE[subject].length)return QUESTION_BANK_CACHE[subject];
+  const bundle=await gs('getQuestionBankBundleFast');
+  installQuestionBank(bundle);
+  return QUESTION_BANK_CACHE[subject]||[];
+}
+async function hydrateAfterLoginV596(){
+  if(POST_LOGIN_LOADING)return POST_LOGIN_LOADING;
+  POST_LOGIN_LOADING=(async()=>{
+    try{
+      const [_,bundle]=await Promise.all([
+        STATIC_DATA_READY.catch(()=>false),
+        gs('getPostLoginBundleV596',currentId)
+      ]);
+      if(bundle?.core)applyStudentState(bundle.core);
+      if(bundle?.runtime){
+        const r=bundle.runtime;
+        if(Array.isArray(r.mailbox)){mailbox=r.mailbox;mailboxLoaded=true;mailboxAt=Date.now();saveLocal('mailbox',mailbox);}
+        if(Array.isArray(r.inventory)){inventory=r.inventory;CLIENT_CACHE.inventory=r;CLIENT_CACHE.inventoryAt=Date.now();saveLocal('inventory',r);}
+        if(Array.isArray(r.backgrounds)){LIVE_LAND_CONFIGS=Object.fromEntries(r.backgrounds.map(x=>[String(x.landId),x]));liveLandCatalogAt=Date.now();saveLocal('landCatalog',r.backgrounds);}
+        if(Array.isArray(r.monsters)){MONSTER_LIST=r.monsters;MONSTER_CONFIGS=Object.fromEntries(MONSTER_LIST.map(m=>[String(m.monsterId),m]));}
+        if(Array.isArray(r.battleBackgrounds))BATTLE_BG_LIST=r.battleBackgrounds;
+        if(Array.isArray(r.petBattleConfigs))PET_BATTLE_CONFIGS=Object.fromEntries(r.petBattleConfigs.map(x=>[String(x.petId),x]));
+        if(state){state.unreadMail=Number(r.unreadMail||0);mailBadge.textContent=state.unreadMail;mailBadge.classList.toggle('hidden',!state.unreadMail);}
+      }
+      if(bundle?.questionBank)installQuestionBank(bundle.questionBank);
+      if(state && bundle?.challengeStatus)state.challengeStatus=bundle.challengeStatus;
+      if(currentTab==='home')renderHome();
+      if(currentTab==='challenge')renderChallengeHome();
+      renderYard();
+      return bundle;
+    }catch(e){
+      console.warn('登入後背景資料載入失敗',e);
+      return null;
+    }finally{
+      POST_LOGIN_LOADING=null;
+    }
+  })();
+  return POST_LOGIN_LOADING;
 }
 
 async function gs(fn,...args){
@@ -321,27 +387,33 @@ async function login(){
   const id=sid.value.trim(),bd=normalizeBirthdayInput(bday.value);
   loginMsg.textContent='登入中…';
   try{
-    // V5.3：登入只拿首頁必要資料，不再同步掃信箱/背包/商店。
-    const loginPromise=gs('loginCore',id,bd);
-    await STATIC_DATA_READY;
-    const r=await loginPromise;
+    // V5.9.6：登入只做身分驗證＋最小資料，首頁立即出現。
+    const r=await gs('loginFastV596',id,bd);
     if(!r){loginMsg.textContent='登入失敗：後端沒有回傳資料。';return;}
     if(!r.ok){loginMsg.textContent=r.message||'登入失敗';return;}
 
     currentId=id;
     hydrateLocalStudentCache();
 
+    // 先用極小 state 進首頁，不再等待寵物/土地/信箱/題庫全部讀完。
+    applyStudentState(r.state||{
+      ok:true,version:r.version||'V5.9.6',
+      student:{id,name:r.name||id,coins:Number(r.coins||0)},
+      pets:[],lands:[],backgrounds:[],activeLandId:'',furniture:[],
+      unreadMail:0,challengeStatus:{}
+    });
+
     loginView.classList.add('hidden');
     studentView.classList.remove('hidden');
-    applyStudentState(r.state);
-
     currentTab='home';
     document.querySelectorAll('.tabbtn').forEach(x=>x.classList.remove('active'));
     document.querySelector('[data-tab="home"]')?.classList.add('active');
-    renderHome();switchMainMode('home');
 
-    // UI 已經顯示後才背景預抓；不阻塞登入。
-    prefetchStudentData();
+    panel.innerHTML='<div class="petcard"><b>🏠 已登入</b><br><span class="small">正在背景載入寵物與小屋資料…</span></div>';
+    switchMainMode('home');
+
+    // 真正的遊戲資料改成背景一次載入，不阻塞登入。
+    hydrateAfterLoginV596();
     startBackgroundMailboxRefresh();
   }catch(e){loginMsg.textContent=e.message||e;}
 }
@@ -595,11 +667,29 @@ function getPetSkills(pet){const cfg=PET_CONFIGS[String(pet.petId)]||{};const ar
 async function startChallengeUI(){
   challenge.petId=chPet.value;
   try{
-    const r=await gs('startChallengeBatch',currentId,challenge.subject,challenge.petId);
-    if(!r.ok&&r.locked){showLocked(r);return;}
-    challenge.questions=r.questions||[];challenge.qIndex=0;challenge.status={...r.status};challenge.pending=[];challenge.seen=[];
-    await loadMonsterCatalog();
+    const localStatus=state?.challengeStatus?.[challenge.subject]||{correct:0,wrong:0,exp:0,locked:false};
+    if(localStatus.locked || Number(localStatus.wrong||0)>=3){
+      showLocked({locked:true,status:localStatus,resetAt:'明早 7:00'});
+      return;
+    }
+
+    // 題庫已在登入後背景預載；正常情況不再等 Apps Script。
+    let pool=localQuestionBatch(challenge.subject,[],30);
+    if(!pool.length){
+      panel.innerHTML='<div class="petcard">題庫第一次載入中…</div>';
+      await ensureQuestionBank(challenge.subject);
+      pool=localQuestionBatch(challenge.subject,[],30);
+    }
+    if(!pool.length)throw new Error('這個科目目前沒有啟用中的題目');
+
+    challenge.questions=pool;
+    challenge.qIndex=0;
+    challenge.status={...localStatus};
+    challenge.pending=[];
+    challenge.seen=[];
     challenge.monsterNo=1;
+
+    // 怪物資料登入後就已預載；沒有資料時也先進戰鬥，用既有 fallback。
     challenge.monsterCfg=getMonsterForBattle(challenge.subject,challenge.monsterNo);
     challenge.monsterMaxHp=getMonsterHp(challenge.monsterCfg,challenge.monsterNo);
     challenge.monsterHp=challenge.monsterMaxHp;
@@ -683,6 +773,7 @@ async function sendBattleAnswer(ans){
 
   const damage=Math.max(1,Math.round(Number(skill.damage||0)*(good?1:.3)));
   challenge.pending.push({questionId:q.id,answer:ans});challenge.seen.push(q.id);challenge.qIndex++;
+  if(challenge.questions && challenge.questions.length-challenge.qIndex<=6){const refill=localQuestionBatch(challenge.subject,challenge.seen.slice(-80),30);if(refill.length){challenge.questions=challenge.questions.slice(challenge.qIndex).concat(refill);challenge.qIndex=0;}}
   challenge.lastMsg=good?`<span class="success">✅ 正確！${esc(skill.name)}造成 <span class="damage-pop">${damage}</span> 傷害，+${gained} EXP</span>`:`<span class="wrong">❌ 答錯，只造成 30% 傷害：<span class="damage-pop">${damage}</span><br>正確答案：${esc(q.answer)} ${esc(q.explanation||'')}</span>`;
   challenge.question=null;challenge.selectedSkill=null;
 
@@ -704,10 +795,23 @@ async function sendBattleAnswer(ans){
     challenge.monsterMaxHp=getMonsterHp(challenge.monsterCfg,challenge.monsterNo);
     challenge.monsterHp=challenge.monsterMaxHp;
   }
-  if(challenge.pending.length>=5)flushChallengeAnswers(false);
+  if(challenge.pending.length>=8)flushChallengeAnswers(false);
   renderBattleMain();renderBattle();
 }
-async function loadMoreBattleQuestions(){try{await flushChallengeAnswers(true);const qs=await gs('getChallengeQuestionBatch',challenge.subject,challenge.seen.slice(-50),30);challenge.questions=qs||[];challenge.qIndex=0;if(!challenge.questions.length)throw new Error('沒有可用題目');challenge.question=challenge.questions[0];renderBattleQuestion();}catch(e){alert(e.message||e);}}
+async function loadMoreBattleQuestions(){
+  try{
+    let qs=localQuestionBatch(challenge.subject,challenge.seen.slice(-80),30);
+    if(!qs.length){
+      await ensureQuestionBank(challenge.subject);
+      qs=localQuestionBatch(challenge.subject,challenge.seen.slice(-80),30);
+    }
+    challenge.questions=qs||[];
+    challenge.qIndex=0;
+    if(!challenge.questions.length)throw new Error('沒有可用題目');
+    challenge.question=challenge.questions[0];
+    renderBattleQuestion();
+  }catch(e){alert(e.message||e);}
+}
 function challengeLocalExp(n){if(n>=50)return 6;if(n>=40)return 5;if(n>=30)return 4;if(n>=20)return 3;if(n>=10)return 2;return 1;}
 function normAns(v){return String(v??'').trim().toUpperCase().replace(/\s+/g,'');}
 async function sendAnswer(ans){
@@ -722,7 +826,7 @@ async function sendAnswer(ans){
   challenge.qIndex++;
   if(challenge.qIndex>=challenge.questions.length){challenge.question=null;renderQuestion(challenge.status,msg);}
   else{challenge.question=challenge.questions[challenge.qIndex];renderQuestion(challenge.status,msg);}
-  if(challenge.pending.length>=5)flushChallengeAnswers(false);
+  if(challenge.pending.length>=8)flushChallengeAnswers(false);
 }
 async function flushChallengeAnswers(force){
   if(challenge.syncing){if(force)await challenge.syncing;else return;}
@@ -735,9 +839,13 @@ async function flushChallengeAnswers(force){
   if(force)return await challenge.syncing;
 }
 async function loadMoreChallengeQuestions(){
-  try{await flushChallengeAnswers(true);const qs=await gs('getChallengeQuestionBatch',challenge.subject,challenge.seen.slice(-50),30);challenge.questions=qs||[];challenge.qIndex=0;challenge.question=challenge.questions[0]||null;renderQuestion(challenge.status);}catch(e){alert(e.message||e);}
+  try{
+    let qs=localQuestionBatch(challenge.subject,challenge.seen.slice(-80),30);
+    if(!qs.length){await ensureQuestionBank(challenge.subject);qs=localQuestionBatch(challenge.subject,challenge.seen.slice(-80),30);}
+    challenge.questions=qs||[];challenge.qIndex=0;challenge.question=challenge.questions[0]||null;renderQuestion(challenge.status);
+  }catch(e){alert(e.message||e);}
 }
-async function finishChallengeUI(){try{await flushChallengeAnswers(true);await refreshState();currentTab='challenge';switchMainMode('battle');challenge.subject='';challenge.petId='';renderBattleMain();renderChallengeHome();}catch(e){alert(e.message||e);}}
+async function finishChallengeUI(){try{await flushChallengeAnswers(true);currentTab='challenge';switchMainMode('battle');challenge.subject='';challenge.petId='';renderBattleMain();renderChallengeHome();}catch(e){alert(e.message||e);}}
 function showLocked(r){panel.innerHTML=`<div class="qbox"><h3>今天這科已挑戰結束</h3><p>明早 7:00 後會重新有 3 次機會。</p><p>重置：${esc(r.resetAt)}</p><button class="btn gray" onclick="renderChallengeHome()">返回</button></div>`;}
 async function renderMail(){
   // 有快取就立刻畫出來，不等待 Apps Script。
@@ -981,5 +1089,16 @@ let adminPassword=sessionStorage.getItem('petHouseAdminPassword')||'';
 async function openAdmin(){const pw=prompt('請輸入老師後台密碼：');if(!pw)return;try{await gs('adminLogin',pw);adminPassword=pw;sessionStorage.setItem('petHouseAdminPassword',pw);loginView.classList.add('hidden');adminView.classList.remove('hidden');await loadAdmin();}catch(e){alert('密碼錯誤或後台驗證失敗：'+(e.message||e));}}
 async function loadAdmin(){if(!adminPassword){logout();return;}adminData=await gs('getAdminDataSecure',adminPassword);const itemOpts=adminData.items.map(x=>`<option value="${x['道具ID']}">${esc(x['名稱'])}</option>`).join('');const petOpts=adminData.pets.map(x=>`<option value="${x.petId}">${esc(x.name)}</option>`).join('');adminArea.innerHTML=`<table class="admin-table"><thead><tr><th>座號</th><th>學生</th><th>金幣</th><th>發獎勵</th></tr></thead><tbody>${adminData.students.map(s=>`<tr><td>${s.seat||''}</td><td>${esc(s.name)}<br><span class="small">${esc(s.id)}</span></td><td>${s.coins}</td><td><div class="row"><button class="btn" onclick="adminCoin('${s.id}',10)">+10🪙</button><select id="it-${s.id}">${itemOpts}</select><input id="iq-${s.id}" type="number" min="1" value="1" style="width:65px"><button class="btn purple" onclick="adminItem('${s.id}')">發道具</button><select id="pt-${s.id}">${petOpts}</select><button class="btn secondary" onclick="adminPet('${s.id}')">發寵物</button></div></td></tr>`).join('')}</tbody></table>`;}
 async function adminCoin(id,n){await gs('adminAddCoins',adminPassword,id,n,'課堂獎勵');await loadAdmin();}
-async function adminItem(id){const item=document.getElementById('it-'+id).value,qty=Number(document.getElementById('iq-'+id).value||1);try{await gs('adminGrantItem',adminPassword,id,item,qty,'課堂獎勵');alert('已發放');}catch(e){alert(e.message||e);}}
+async function adminItem(id){
+  if(adminBusyItem.has(id))return;
+  const item=document.getElementById('it-'+id).value,qty=Number(document.getElementById('iq-'+id).value||1);
+  const btn=document.activeElement;
+  adminBusyItem.add(id);if(btn)btn.disabled=true;
+  try{
+    const r=await gs('adminGrantItemFast',adminPassword,id,item,qty,'課堂獎勵');
+    const note=document.createElement('span');note.className='success';note.textContent=` ✅ 已發 ${qty}`;
+    btn?.parentElement?.appendChild(note);setTimeout(()=>note.remove(),1400);
+  }catch(e){alert(e.message||e);}
+  finally{adminBusyItem.delete(id);if(btn)btn.disabled=false;}
+}
 async function adminPet(id){const p=document.getElementById('pt-'+id).value;try{await gs('adminAssignPet',adminPassword,id,p);alert('已分配寵物');}catch(e){alert(e.message||e);}}
