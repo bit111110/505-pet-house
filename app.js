@@ -1,4 +1,4 @@
-const FRONTEND_BUILD='20261005-1745';
+const FRONTEND_BUILD='20261005-1900';
 const BUILTIN_LAND_BACKGROUNDS = {
   'LAND001': 'assets/maps/grassland.png',
   'LAND002': 'assets/maps/forest.png',
@@ -619,10 +619,36 @@ function renderBattle(){
 }
 function useBattleSkill(skillId){const pet=state.pets.find(p=>p.petId===challenge.petId);const skill=getConfiguredPetSkills(pet).find(s=>String(s.id)===String(skillId));if(!skill)return;challenge.selectedSkill=skill;if(!challenge.questions?.length || challenge.qIndex>=challenge.questions.length){loadMoreBattleQuestions();return;}challenge.question=challenge.questions[challenge.qIndex];renderBattleQuestion();}
 
-function questionImageHtml(q){
-  const src=String(q?.image||q?.imagePath||'').trim().replace(/\\/g,'/');
+const QUESTION_IMAGE_FALLBACK_BY_ID={
+  'M001':'IMG001','M002':'IMG001',
+  'M004':'IMG002','M005':'IMG002',
+  'M009':'IMG003','M010':'IMG004',
+  'M025':'IMG005','M029':'IMG006',
+  'M032':'IMG007','M036':'IMG008'
+};
+
+function resolveQuestionImage(q){
+  let src=String(q?.image||q?.imagePath||'').trim().replace(/\\/g,'/');
+  let imageId=String(q?.imageId||'').trim();
+  if(!imageId) imageId=QUESTION_IMAGE_FALLBACK_BY_ID[String(q?.id||'')]||'';
+  if(!src && imageId) src=`assets/math/${imageId}.png`;
   if(!src)return '';
-  return `<div class="question-image-wrap"><img class="question-image" src="${esc(src)}" alt="題目圖片" onerror="this.parentElement.style.display='none'"></div>`;
+  // Absolute URLs stay unchanged; GitHub-relative images get a cache-busting build query.
+  if(!/^https?:\/\//i.test(src)){
+    src=src.replace(/^\.?\//,'');
+    src=`${src}${src.includes('?')?'&':'?'}v=${FRONTEND_BUILD}`;
+  }
+  return src;
+}
+
+function questionImageHtml(q){
+  const src=resolveQuestionImage(q);
+  if(!src)return '';
+  return `<div class="question-image-wrap">
+    <img class="question-image" src="${esc(src)}" alt="題目圖片"
+      onload="this.parentElement.style.display='block'"
+      onerror="this.parentElement.innerHTML='<div class=&quot;small&quot; style=&quot;color:#b44;padding:8px&quot;>題目圖片載入失敗：${esc(src)}</div>'">
+  </div>`;
 }
 
 function renderBattleQuestion(){
