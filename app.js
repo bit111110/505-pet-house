@@ -1,4 +1,4 @@
-const FRONTEND_BUILD='20261005-2355';
+const FRONTEND_BUILD='20261006-0025';
 const BUILTIN_LAND_BACKGROUNDS = {
   'LAND001': 'assets/maps/grassland.png',
   'LAND002': 'assets/maps/forest.png',
@@ -242,6 +242,7 @@ let currentId='',state=null,currentTab='home',mainMode='home',wanderTimer=null,i
 let mailboxLoaded=false,mailboxAt=0,mailRefreshPromise=null,backgroundMailTimer=null;
 const CLIENT_CACHE={shop:null,shopAt:0,inventory:null,inventoryAt:0};
 const QUESTION_BANK_CACHE={};
+const QUESTION_BANK_LOADED={};
 let POST_LOGIN_LOADING=null;
 let QUESTION_BANK_READY=false;
 let adminBusyItem=new Set();
@@ -285,10 +286,15 @@ function shuffleCopy(arr){
 function installQuestionBank(bundle){
   if(!bundle || typeof bundle!=='object')return;
   ['國語','數學','英文','自然','社會'].forEach(s=>{
-    if(Array.isArray(bundle[s]))QUESTION_BANK_CACHE[s]=bundle[s];
+    if(Array.isArray(bundle[s])){
+      QUESTION_BANK_CACHE[s]=bundle[s];
+      QUESTION_BANK_LOADED[s]=true;
+    }
   });
   QUESTION_BANK_READY=Object.keys(QUESTION_BANK_CACHE).some(k=>Array.isArray(QUESTION_BANK_CACHE[k])&&QUESTION_BANK_CACHE[k].length);
+  if(currentTab==='challenge')renderChallengeHome();
 }
+
 function localQuestionBatch(subject,excludeIds=[],limit=30){
   const src=QUESTION_BANK_CACHE[String(subject)]||[];
   if(!src.length)return [];
@@ -299,12 +305,15 @@ function localQuestionBatch(subject,excludeIds=[],limit=30){
 }
 async function ensureQuestionBank(subject){
   subject=String(subject||'');
-  if(Array.isArray(QUESTION_BANK_CACHE[subject]) && QUESTION_BANK_CACHE[subject].length)return QUESTION_BANK_CACHE[subject];
+  if(QUESTION_BANK_LOADED[subject])return QUESTION_BANK_CACHE[subject]||[];
   const rows=await gsRaw('getQuestionBankSubjectFast',subject);
-  if(Array.isArray(rows))QUESTION_BANK_CACHE[subject]=rows;
+  QUESTION_BANK_CACHE[subject]=Array.isArray(rows)?rows:[];
+  QUESTION_BANK_LOADED[subject]=true;
   QUESTION_BANK_READY=Object.keys(QUESTION_BANK_CACHE).some(k=>Array.isArray(QUESTION_BANK_CACHE[k])&&QUESTION_BANK_CACHE[k].length);
-  return QUESTION_BANK_CACHE[subject]||[];
+  if(currentTab==='challenge')renderChallengeHome();
+  return QUESTION_BANK_CACHE[subject];
 }
+
 async function hydrateAfterLoginV596(){
   if(POST_LOGIN_LOADING)return POST_LOGIN_LOADING;
   POST_LOGIN_LOADING=(async()=>{
@@ -909,8 +918,33 @@ async function useExp(itemId){
   }catch(e){alert(e.message||e);}
 }
 async function renderBag(){if(!Array.isArray(inventory)||!inventory.length)inventory=await gs('getInventory',currentId);panel.innerHTML=`<h3>🎒 我的道具</h3>${inventory.map(x=>`<div class="itemcard" style="min-height:86px">${x.config?.['圖片']?`<img src="${esc(x.config['圖片'])}" style="width:76px;height:76px;object-fit:contain;float:left;margin-right:10px">`:''}<b>${esc(x.config?.['名稱']||x.itemId)}</b> ×${x.quantity}<br><span class="small">${esc(x.config?.['類型']||'')}｜${esc(x.config?.['說明']||'')}</span><div style="clear:both"></div></div>`).join('')||'<div class="itemcard">背包目前是空的。</div>'}`;}
-function renderChallengeHome(){const subjects=['國語','數學','英文','自然','社會'];panel.innerHTML=`<h3>⚔️ 寵物對戰挑戰</h3><p class="small">選擇科目與寵物。使用技能時會出題；答對造成完整傷害，答錯仍可造成 30% 傷害。每科累積答錯 3 次後鎖定到下一個早上 7:00。</p>${subjects.map(s=>{const st=state.challengeStatus?.[s]||{correct:0,wrong:0,locked:false};return `<div class="subjectcard"><b>${s}</b>　答對 ${st.correct}　<span class="lives">${'❤️'.repeat(Math.max(0,3-st.wrong))}${'🖤'.repeat(st.wrong)}</span><br><button class="btn ${st.locked?'gray':'blue'}" ${st.locked?'disabled':''} onclick="chooseChallenge('${s}')">${st.locked?'今日已結束':'進入對戰'}</button></div>`}).join('')}`;}
-function chooseChallenge(subject){challenge.subject=subject;switchMainMode('battle');renderBattleMain();panel.innerHTML=`<h3>⚔️ ${subject}對戰</h3><label>選擇出戰寵物</label><select id="chPet" class="full">${state.pets.map(p=>`<option value="${p.petId}">${esc(p.name)} Lv.${p.level}・第${p.stage}階</option>`).join('')}</select><div class="nav"><button class="btn blue" onclick="startChallengeUI()">開始戰鬥</button><button class="btn gray" onclick="renderChallengeHome()">返回</button></div>`;}
+function renderChallengeHome(){
+  const subjects=['國語','數學','英文','自然','社會'];
+  panel.innerHTML=`<h3>⚔️ 寵物對戰挑戰</h3>
+    <p class="small">只有題庫中有「啟用中題目」的科目才可以進入對戰。</p>
+    ${subjects.map(s=>{
+      const st=state.challengeStatus?.[s]||{correct:0,wrong:0,locked:false};
+      const loaded=!!QUESTION_BANK_LOADED[s];
+      const count=Array.isArray(QUESTION_BANK_CACHE[s])?QUESTION_BANK_CACHE[s].length:0;
+      const noQuestions=loaded && count===0;
+      const disabled=!loaded || noQuestions || st.locked;
+
+      let label='進入對戰';
+      if(!loaded) label='題庫載入中…';
+      else if(noQuestions) label='暫無題目';
+      else if(st.locked) label='今日已結束';
+
+      return `<div class="subjectcard ${disabled?'subject-disabled':''}">
+        <b>${s}</b>　答對 ${st.correct}　
+        <span class="lives">${'❤️'.repeat(Math.max(0,3-st.wrong))}${'🖤'.repeat(st.wrong)}</span>
+        ${loaded?`<span class="small">｜題目 ${count} 題</span>`:''}
+        <br>
+        <button class="btn ${disabled?'gray':'blue'}" ${disabled?'disabled':''}
+          onclick="chooseChallenge('${s}')">${label}</button>
+      </div>`;
+    }).join('')}`;
+}
+function chooseChallenge(subject){if(!QUESTION_BANK_LOADED[subject]||!(QUESTION_BANK_CACHE[subject]||[]).length)return;challenge.subject=subject;switchMainMode('battle');renderBattleMain();panel.innerHTML=`<h3>⚔️ ${subject}對戰</h3><label>選擇出戰寵物</label><select id="chPet" class="full">${state.pets.map(p=>`<option value="${p.petId}">${esc(p.name)} Lv.${p.level}・第${p.stage}階</option>`).join('')}</select><div class="nav"><button class="btn blue" onclick="startChallengeUI()">開始戰鬥</button><button class="btn gray" onclick="renderChallengeHome()">返回</button></div>`;}
 function getPetSkills(pet){const cfg=PET_CONFIGS[String(pet.petId)]||{};const arr=Array.isArray(cfg.skills)?cfg.skills:[];return arr.filter(s=>Number(s.minStage||1)<=Number(pet.stage||1));}
 async function startChallengeUI(){
   challenge.petId=chPet.value;

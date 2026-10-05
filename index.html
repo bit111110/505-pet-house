@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#f5efe4">
 <title>505 班級寵物小屋</title>
 <link rel="preload" href="assets/maps/MAP001.webp" as="image">
-<link rel="stylesheet" href="style.css?v=20261005-2355">
+<link rel="stylesheet" href="style.css?v=20261006-0025">
 
 <style>
 .question-image-wrap{margin:10px 0 14px;text-align:center}
@@ -52,12 +52,17 @@
 .bulk-admin-card .row{gap:8px;flex-wrap:wrap}
 .batch-exp-toolbar{margin:10px 0;padding:10px;border:1px solid #ddd;border-radius:12px;background:#fafafa}
 </style>
+
+<style>
+.subjectcard.subject-disabled{opacity:.58;filter:grayscale(.55)}
+.subjectcard.subject-disabled .btn{cursor:not-allowed}
+</style>
 </head>
 <body>
-<div id="loginView" class="app"><div class="card login"><h1>🐾 班級寵物小屋 V5.9.9</h1><p>學號＋生日（月／日）登入</p><input id="sid" placeholder="學號，例如 50501"><input id="bday" type="text" inputmode="numeric" maxlength="5" placeholder="生日（月/日），例如 09/08"><div class="nav"><button class="btn" onclick="login()">登入</button><button class="btn gray" onclick="openAdmin()">老師後台</button></div><p id="loginMsg"></p></div></div>
+<div id="loginView" class="app"><div class="card login"><h1>🐾 班級寵物小屋 V5.10.0</h1><p>學號＋生日（月／日）登入</p><input id="sid" placeholder="學號，例如 50501"><input id="bday" type="text" inputmode="numeric" maxlength="5" placeholder="生日（月/日），例如 09/08"><div class="nav"><button class="btn" onclick="login()">登入</button><button class="btn gray" onclick="openAdmin()">老師後台</button></div><p id="loginMsg"></p></div></div>
 
 <div id="studentView" class="hidden">
-  <div class="top"><div><b id="studentName">學生</b> 的寵物小屋 <span class="small" id="ver"></span> <span class="small">前端 20261005-2355</span></div><div class="coins">🪙 <span id="coins">0</span></div></div>
+  <div class="top"><div><b id="studentName">學生</b> 的寵物小屋 <span class="small" id="ver"></span> <span class="small">前端 20261006-0025</span></div><div class="coins">🪙 <span id="coins">0</span></div></div>
   <div class="app layout">
     <div class="main-stage-wrap">
       <div class="main-mode-tabs">
@@ -91,8 +96,8 @@
     <div class="small">正在寫入資料，請不要重複點擊或切換頁面。</div>
   </div>
 </div>
-<script src="config.js?v=20261005-2355"></script>
-<script src="app.js?v=20261005-2355"></script>
+<script src="config.js?v=20261006-0025"></script>
+<script src="app.js?v=20261006-0025"></script>
 
 <div id="globalWaitingOverlay" aria-live="polite" aria-busy="true">
   <div class="waiting-card">
