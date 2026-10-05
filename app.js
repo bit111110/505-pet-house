@@ -1,4 +1,4 @@
-const FRONTEND_BUILD='20261005-2100';
+const FRONTEND_BUILD='20261005-2145';
 const BUILTIN_LAND_BACKGROUNDS = {
   'LAND001': 'assets/maps/grassland.png',
   'LAND002': 'assets/maps/forest.png',
@@ -237,7 +237,7 @@ function localQuestionBatch(subject,excludeIds=[],limit=30){
 async function ensureQuestionBank(subject){
   subject=String(subject||'');
   if(Array.isArray(QUESTION_BANK_CACHE[subject]) && QUESTION_BANK_CACHE[subject].length)return QUESTION_BANK_CACHE[subject];
-  const rows=await gs('getQuestionBankSubjectFast',subject);
+  const rows=await gsRaw('getQuestionBankSubjectFast',subject);
   if(Array.isArray(rows))QUESTION_BANK_CACHE[subject]=rows;
   QUESTION_BANK_READY=Object.keys(QUESTION_BANK_CACHE).some(k=>Array.isArray(QUESTION_BANK_CACHE[k])&&QUESTION_BANK_CACHE[k].length);
   return QUESTION_BANK_CACHE[subject]||[];
@@ -248,7 +248,7 @@ async function hydrateAfterLoginV596(){
     try{
       const [_,bundle]=await Promise.all([
         STATIC_DATA_READY.catch(()=>false),
-        gs('getPostLoginBundleV596',currentId)
+        gsRaw('getPostLoginBundleV596',currentId)
       ]);
       if(bundle?.core)applyStudentState(bundle.core);
       if(bundle?.runtime){
@@ -286,7 +286,45 @@ async function hydrateAfterLoginV596(){
   return POST_LOGIN_LOADING;
 }
 
-async function gs(fn,...args){
+
+let WAITING_COUNT=0;
+function showWaiting(text='等待中...'){
+  WAITING_COUNT++;
+  const ov=document.getElementById('globalWaitingOverlay');
+  const tx=document.getElementById('globalWaitingText');
+  if(tx)tx.textContent=text||'等待中...';
+  if(ov)ov.classList.add('show');
+}
+function hideWaiting(){
+  WAITING_COUNT=Math.max(0,WAITING_COUNT-1);
+  if(WAITING_COUNT===0){
+    const ov=document.getElementById('globalWaitingOverlay');
+    if(ov)ov.classList.remove('show');
+  }
+}
+function waitingLabelFor(fn){
+  const map={
+    loginFastV596:'登入中...',
+    loginCore:'登入中...',
+    getPostLoginBundleV596:'載入小屋資料中...',
+    getQuestionBankSubjectFast:'載入題庫中...',
+    getQuestionBankBundleFast:'載入題庫中...',
+    startChallengeBatch:'準備戰鬥中...',
+    submitChallengeBatch:'同步答題紀錄中...',
+    getRuntimeBundleFast:'載入遊戲資料中...',
+    adminGrantItemFast:'發放道具中...',
+    adminGrantItem:'發放道具中...',
+    getMailbox:'載入信箱中...',
+    collectAllMailbox:'領取信件中...',
+    getInventory:'載入背包中...',
+    feedExpFastV55:'升級寵物中...',
+    getMonsterCatalogFast:'載入怪物資料中...',
+    getBattleBackgroundCatalogFast:'載入戰鬥背景中...'
+  };
+  return map[fn]||'等待中...';
+}
+
+async function gsRaw(fn,...args){
   if(!window.API_URL || /PASTE|YOUR|貼上/i.test(window.API_URL)){
     throw new Error('尚未設定 Apps Script API 網址。請打開 config.js 貼上部署後的 /exec 網址。');
   }
@@ -311,6 +349,21 @@ async function gs(fn,...args){
     throw e;
   }finally{clearTimeout(timer);}
 }
+async function gs(fn,...args){
+  const shouldShow = ![
+    'getUnreadMailCountFast',
+    'heartbeat',
+    'logLogin',
+    'getMailboxFast_'
+  ].includes(fn);
+  if(shouldShow)showWaiting(waitingLabelFor(fn));
+  try{
+    return await gsRaw(fn,...args);
+  }finally{
+    if(shouldShow)hideWaiting();
+  }
+}
+
 function esc(v){return String(v??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#39;');}
 
 function applyStudentState(s){
@@ -688,7 +741,8 @@ async function startChallengeUI(){
     let pool=localQuestionBatch(challenge.subject,[],30);
     if(!pool.length){
       panel.innerHTML='<div class="petcard">題庫第一次載入中…</div>';
-      await ensureQuestionBank(challenge.subject);
+      showWaiting('載入題庫中...');
+      try{await ensureQuestionBank(challenge.subject);}finally{hideWaiting();}
       pool=localQuestionBatch(challenge.subject,[],30);
     }
     if(!pool.length)throw new Error('這個科目目前沒有可用題目；若剛登入，請等 1 秒後再按一次開始戰鬥。');

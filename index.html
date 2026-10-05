@@ -6,19 +6,41 @@
 <meta name="theme-color" content="#f5efe4">
 <title>505 班級寵物小屋</title>
 <link rel="preload" href="assets/maps/MAP001.webp" as="image">
-<link rel="stylesheet" href="style.css?v=20261005-2100">
+<link rel="stylesheet" href="style.css?v=20261005-2145">
 
 <style>
 .question-image-wrap{margin:10px 0 14px;text-align:center}
 .question-image{display:block;max-width:100%;max-height:280px;margin:0 auto;border-radius:12px;object-fit:contain;background:#fff}
 @media(max-width:900px){.question-image{max-height:220px}}
 </style>
+
+<style>
+#globalWaitingOverlay{
+  position:fixed;inset:0;z-index:99999;
+  display:none;align-items:center;justify-content:center;
+  background:rgba(255,255,255,.72);backdrop-filter:blur(3px);
+}
+#globalWaitingOverlay.show{display:flex}
+.waiting-card{
+  min-width:220px;max-width:80vw;
+  padding:24px 28px;border-radius:20px;
+  background:#fff;box-shadow:0 12px 40px rgba(0,0,0,.18);
+  text-align:center;font-weight:700;font-size:20px;
+}
+.waiting-spinner{
+  width:46px;height:46px;margin:0 auto 14px;
+  border:5px solid #ddd;border-top-color:#6e87c4;border-radius:50%;
+  animation:waitingSpin .8s linear infinite;
+}
+.waiting-sub{margin-top:8px;font-size:13px;font-weight:500;color:#777}
+@keyframes waitingSpin{to{transform:rotate(360deg)}}
+</style>
 </head>
 <body>
-<div id="loginView" class="app"><div class="card login"><h1>🐾 班級寵物小屋 V5.9.6.1</h1><p>學號＋生日（月／日）登入</p><input id="sid" placeholder="學號，例如 50501"><input id="bday" type="text" inputmode="numeric" maxlength="5" placeholder="生日（月/日），例如 09/08"><div class="nav"><button class="btn" onclick="login()">登入</button><button class="btn gray" onclick="openAdmin()">老師後台</button></div><p id="loginMsg"></p></div></div>
+<div id="loginView" class="app"><div class="card login"><h1>🐾 班級寵物小屋 V5.9.6.2</h1><p>學號＋生日（月／日）登入</p><input id="sid" placeholder="學號，例如 50501"><input id="bday" type="text" inputmode="numeric" maxlength="5" placeholder="生日（月/日），例如 09/08"><div class="nav"><button class="btn" onclick="login()">登入</button><button class="btn gray" onclick="openAdmin()">老師後台</button></div><p id="loginMsg"></p></div></div>
 
 <div id="studentView" class="hidden">
-  <div class="top"><div><b id="studentName">學生</b> 的寵物小屋 <span class="small" id="ver"></span> <span class="small">前端 20261005-2100</span></div><div class="coins">🪙 <span id="coins">0</span></div></div>
+  <div class="top"><div><b id="studentName">學生</b> 的寵物小屋 <span class="small" id="ver"></span> <span class="small">前端 20261005-2145</span></div><div class="coins">🪙 <span id="coins">0</span></div></div>
   <div class="app layout">
     <div class="main-stage-wrap">
       <div class="main-mode-tabs">
@@ -52,7 +74,15 @@
     <div class="small">正在寫入資料，請不要重複點擊或切換頁面。</div>
   </div>
 </div>
-<script src="config.js?v=20261005-2100"></script>
-<script src="app.js?v=20261005-2100"></script>
+<script src="config.js?v=20261005-2145"></script>
+<script src="app.js?v=20261005-2145"></script>
+
+<div id="globalWaitingOverlay" aria-live="polite" aria-busy="true">
+  <div class="waiting-card">
+    <div class="waiting-spinner"></div>
+    <div id="globalWaitingText">等待中...</div>
+    <div class="waiting-sub">資料處理中，請稍候</div>
+  </div>
+</div>
 </body>
 </html>
