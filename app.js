@@ -1,4 +1,4 @@
-const FRONTEND_BUILD='20261006-2358';
+const FRONTEND_BUILD='20261007-0015';
 const BUILTIN_LAND_BACKGROUNDS = {
   'LAND001': 'assets/maps/grassland.png',
   'LAND002': 'assets/maps/forest.png',
@@ -154,6 +154,31 @@ function applyStaticConfigsToState(s){
   return s;
 }
 
+
+function loadLandCatalogLocalV5106(){
+  try{
+    const x=JSON.parse(localStorage.getItem('petHouseLandCatalogV5106')||'null');
+    return x&&Array.isArray(x.rows)?x:null;
+  }catch(e){return null;}
+}
+function saveLandCatalogLocalV5106(rows){
+  try{localStorage.setItem('petHouseLandCatalogV5106',JSON.stringify({at:Date.now(),rows:rows||[]}));}catch(e){}
+}
+function applyLandCatalogV5106(rows){
+  if(!Array.isArray(rows))return;
+  LIVE_LAND_CONFIGS=Object.fromEntries(rows.map(r=>[String(r.landId),r]));
+  liveLandCatalogAt=Date.now();
+  saveLandCatalogLocalV5106(rows);
+}
+async function ensureLandCatalogV5106(force=false){
+  const local=loadLandCatalogLocalV5106();
+  if(!force && local?.rows?.length){applyLandCatalogV5106(local.rows);return local.rows;}
+  const rows=await gsRaw('getBackgroundCatalogFast');
+  if(!Array.isArray(rows))throw new Error('後端沒有回傳背景資料');
+  applyLandCatalogV5106(rows);
+  return rows;
+}
+
 function getLandShopRows(){
   const source = Object.keys(LIVE_LAND_CONFIGS).length
     ? Object.values(LIVE_LAND_CONFIGS)
@@ -213,28 +238,16 @@ function liveLandById(id){
 }
 
 async function refreshLiveLandCatalog(forceRender=false){
-  if(!currentId && !forceRender) return null;
-  const rows=await gs('getBackgroundCatalogFresh');
-  if(!Array.isArray(rows))throw new Error('背景設定同步失敗：後端沒有回傳背景資料');
-  LIVE_LAND_CONFIGS=Object.fromEntries(rows.map(r=>[String(r.landId),r]));
-  liveLandCatalogAt=Date.now();
-  saveLocal('landCatalog',rows);
-
+  const rows=await ensureLandCatalogV5106(true);
   if(state && Array.isArray(state.lands)){
     state.lands=state.lands.map(l=>{
       const id=String(l.backgroundId||l['背景ID']||'LAND001');
       const cfg=liveLandById(id);
       if(!cfg)return l;
-      return {...l,config:{...(l.config||{}),
-        '土地ID':cfg.landId,'名稱':cfg.name,'價格':cfg.price,
-        '背景圖片':cfg.background,'寬度':cfg.width,'高度':cfg.height,'是否開放':cfg.enabled
-      }};
+      return {...l,config:{...(l.config||{}),'土地ID':cfg.landId,'名稱':cfg.name,'價格':cfg.price,'背景圖片':cfg.background,'寬度':cfg.width,'高度':cfg.height,'是否開放':cfg.enabled}};
     });
   }
-  if(forceRender){
-    if(currentTab==='home')renderHome();
-    renderYard();
-  }
+  if(forceRender){if(currentTab==='home')renderHome();renderYard();}
   return rows;
 }
 
@@ -374,9 +387,7 @@ async function hydrateAfterLoginV596(){
         }
       }
 
-      // 共用設定只在快取過期時背景更新；不阻塞登入。
-      refreshStaticCatalogsV598(false);
-
+      // V5.10.6：登入後不再自動抓整包共用設定，避免全班同時登入造成尖峰。
       // V5.10.1：登入後不再預抓五科題庫、不再自動讀完整信箱。
       // 挑戰資料只在學生真的點「對戰」時讀；信箱只在學生點「信箱」時讀。
       if(currentTab==='home')renderHome();
@@ -671,15 +682,16 @@ async function loadMonsterCatalog(){
   const cached=readStaticCatalogCache();
   if(cached?.data?.monsters?.length){
     applyStaticCatalogBundle(cached.data);
-    return MONSTER_LIST;
+    if(MONSTER_LIST.length)return MONSTER_LIST;
   }
   try{
-    const data=await refreshStaticCatalogsV598(true);
-    return Array.isArray(data?.monsters)?data.monsters:MONSTER_LIST;
-  }catch(e){
-    console.warn('怪物設定載入失敗',e);
-    return MONSTER_LIST;
-  }
+    const rows=await gsRaw('getMonsterCatalogFresh');
+    if(Array.isArray(rows)){
+      MONSTER_LIST=rows;
+      MONSTER_CONFIGS=Object.fromEntries(rows.map(m=>[String(m.monsterId),m]));
+    }
+  }catch(e){console.warn('怪物設定載入失敗',e);}
+  return MONSTER_LIST;
 }
 
 function getAvailableMonsters(subject){
@@ -730,6 +742,22 @@ function attributeIconHtml(attr,size=24){
     background-size:${ATTRIBUTE_GRID.cols*size}px ${ATTRIBUTE_GRID.rows*size}px;
     background-position:-${col*size}px -${row*size}px;
   "></span>`;
+}
+
+
+let BATTLE_CONFIG_LOADING_V5106=null;
+async function ensureBattleConfigsV5106(){
+  if(BATTLE_CONFIG_LOADING_V5106)return BATTLE_CONFIG_LOADING_V5106;
+  if(MONSTER_LIST.length && BATTLE_BG_LIST.length && Object.keys(PET_BATTLE_CONFIGS).length)return true;
+  BATTLE_CONFIG_LOADING_V5106=(async()=>{
+    const jobs=[];
+    if(!MONSTER_LIST.length)jobs.push(loadMonsterCatalog());
+    if(!BATTLE_BG_LIST.length)jobs.push(gsRaw('getBattleBackgroundCatalogFast').then(r=>{if(Array.isArray(r))BATTLE_BG_LIST=r;}));
+    if(!Object.keys(PET_BATTLE_CONFIGS).length)jobs.push(gsRaw('getPetBattleConfigFast').then(r=>{if(Array.isArray(r))PET_BATTLE_CONFIGS=Object.fromEntries(r.map(x=>[String(x.petId),x]));}));
+    await Promise.allSettled(jobs);
+    return true;
+  })().finally(()=>{BATTLE_CONFIG_LOADING_V5106=null;});
+  return BATTLE_CONFIG_LOADING_V5106;
 }
 
 function getBattleBackground(subject){
@@ -1077,6 +1105,8 @@ async function chooseChallenge(subject){
       <button class="btn gray" onclick="renderChallengeHome()">返回</button>`;
     return;
   }
+
+  await ensureBattleConfigsV5106();
 
   let saved=null;
   try{saved=await gsRaw('getBattleProgressV5105',currentId,subject);}catch(e){}
@@ -1487,21 +1517,20 @@ async function redeemBackgroundUI(id){
   finally{endPurchaseBusy();}
 }
 
-async function renderShop(){
-  panel.innerHTML=`<h3>🛒 土地／背景</h3><div class="itemcard">正在同步最新背景設定...</div>`;
-
-  // 每次進入商店都直接抓一次試算表最新設定。
-  // 不再拿舊 localStorage / GitHub JSON 判斷金幣或寶物分類。
+async function renderShop(forceSync=false){
+  panel.innerHTML=`<h3>🛒 土地／背景</h3><div class="itemcard">讀取背景清單中...</div>`;
   try{
-    const rowsFast=await gs('getBackgroundCatalogFast');
-    if(Array.isArray(rowsFast)){
-      LIVE_LAND_CONFIGS=Object.fromEntries(rowsFast.map(r=>[String(r.landId),r]));
-      liveLandCatalogAt=Date.now();
-      saveLocal('landCatalog',rowsFast);
+    if(forceSync || !Object.keys(LIVE_LAND_CONFIGS).length){
+      const local=loadLandCatalogLocalV5106();
+      if(!forceSync && local?.rows?.length)applyLandCatalogV5106(local.rows);
+      else await ensureLandCatalogV5106(forceSync);
     }
   }catch(e){
-    panel.innerHTML=`<h3>🛒 土地／背景</h3><div class="itemcard"><b>⚠️ 背景設定同步失敗</b><br>${esc(e.message||e)}<br><br><button class="btn" onclick="renderShop()">重新同步</button></div>`;
-    return;
+    if(!Object.keys(LIVE_LAND_CONFIGS).length){
+      panel.innerHTML=`<h3>🛒 土地／背景</h3><div class="itemcard"><b>⚠️ 背景資料暫時無法載入</b><br>${esc(e.message||e)}<br><br><button class="btn" onclick="renderShop(true)">重新同步</button></div>`;
+      return;
+    }
+    console.warn('背景同步失敗，沿用本機快取',e);
   }
 
   if(!Array.isArray(inventory))inventory=[];
