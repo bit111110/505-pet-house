@@ -1,4 +1,4 @@
-const FRONTEND_BUILD='20261006-0025';
+const FRONTEND_BUILD='20261006-1735';
 const BUILTIN_LAND_BACKGROUNDS = {
   'LAND001': 'assets/maps/grassland.png',
   'LAND002': 'assets/maps/forest.png',
@@ -243,6 +243,9 @@ let mailboxLoaded=false,mailboxAt=0,mailRefreshPromise=null,backgroundMailTimer=
 const CLIENT_CACHE={shop:null,shopAt:0,inventory:null,inventoryAt:0};
 const QUESTION_BANK_CACHE={};
 const QUESTION_BANK_LOADED={};
+let CHALLENGE_HOME_META=null;
+let CHALLENGE_HOME_LOADING=null;
+const QUESTION_BROWSER_CACHE_MS=60*60*1000;
 let POST_LOGIN_LOADING=null;
 let QUESTION_BANK_READY=false;
 let adminBusyItem=new Set();
@@ -303,12 +306,34 @@ function localQuestionBatch(subject,excludeIds=[],limit=30){
   if(!pool.length)pool=[...src];
   return shuffleCopy(pool).slice(0,Math.max(1,limit));
 }
+function questionCacheKey(subject){return 'petHouseQuestionV5101:'+String(subject||'');}
+function readQuestionBrowserCache(subject){
+  try{
+    const x=JSON.parse(localStorage.getItem(questionCacheKey(subject))||'null');
+    if(!x||!Array.isArray(x.rows)||Date.now()-Number(x.at||0)>QUESTION_BROWSER_CACHE_MS)return null;
+    return x.rows;
+  }catch(e){return null;}
+}
+function saveQuestionBrowserCache(subject,rows){
+  try{localStorage.setItem(questionCacheKey(subject),JSON.stringify({at:Date.now(),rows:rows||[]}));}catch(e){}
+}
 async function ensureQuestionBank(subject){
   subject=String(subject||'');
   if(QUESTION_BANK_LOADED[subject])return QUESTION_BANK_CACHE[subject]||[];
+
+  const local=readQuestionBrowserCache(subject);
+  if(Array.isArray(local)){
+    QUESTION_BANK_CACHE[subject]=local;
+    QUESTION_BANK_LOADED[subject]=true;
+    QUESTION_BANK_READY=QUESTION_BANK_READY||local.length>0;
+    if(currentTab==='challenge')renderChallengeHome();
+    return local;
+  }
+
   const rows=await gsRaw('getQuestionBankSubjectFast',subject);
   QUESTION_BANK_CACHE[subject]=Array.isArray(rows)?rows:[];
   QUESTION_BANK_LOADED[subject]=true;
+  saveQuestionBrowserCache(subject,QUESTION_BANK_CACHE[subject]);
   QUESTION_BANK_READY=Object.keys(QUESTION_BANK_CACHE).some(k=>Array.isArray(QUESTION_BANK_CACHE[k])&&QUESTION_BANK_CACHE[k].length);
   if(currentTab==='challenge')renderChallengeHome();
   return QUESTION_BANK_CACHE[subject];
@@ -320,32 +345,25 @@ async function hydrateAfterLoginV596(){
     try{
       const [_,bundle]=await Promise.all([
         STATIC_DATA_READY.catch(()=>false),
-        gsRaw('getPostLoginBundleV596',currentId)
+        gsRaw('getPostLoginBundleV5101',currentId)
       ]);
       if(bundle?.core)applyStudentState(bundle.core);
       if(bundle?.runtime){
         const r=bundle.runtime;
-        if(Array.isArray(r.mailbox)){mailbox=r.mailbox;mailboxLoaded=true;mailboxAt=Date.now();saveLocal('mailbox',mailbox);}
-        if(Array.isArray(r.inventory)){inventory=r.inventory;CLIENT_CACHE.inventory=r;CLIENT_CACHE.inventoryAt=Date.now();saveLocal('inventory',r);}
-        // 共用設定 V5.9.7 改由 GitHub JSON / localStorage / 單一靜態 API 背景更新。
-        if(state){state.unreadMail=Number(r.unreadMail||0);mailBadge.textContent=state.unreadMail;mailBadge.classList.toggle('hidden',!state.unreadMail);}
+        if(Array.isArray(r.inventory)){
+          inventory=r.inventory;
+          CLIENT_CACHE.inventory=r;
+          CLIENT_CACHE.inventoryAt=Date.now();
+          saveLocal('inventory',r);
+        }
       }
-      if(state && bundle?.challengeStatus)state.challengeStatus=bundle.challengeStatus;
 
-      // 共用設定以試算表為唯一來源；登入後靜默更新快取，不阻塞學生。
+      // 共用設定只在快取過期時背景更新；不阻塞登入。
       refreshStaticCatalogsV598(false);
 
-      // 題庫改成「單科、分次」預載，避免一次回傳五科造成 Apps Script 回傳過大。
-      (async()=>{
-        const order=['數學','國語','英文','自然','社會'];
-        for(const s of order){
-          if(Array.isArray(QUESTION_BANK_CACHE[s])&&QUESTION_BANK_CACHE[s].length)continue;
-          try{await ensureQuestionBank(s);}catch(e){console.warn('題庫預載失敗',s,e);}
-          await new Promise(r=>setTimeout(r,120));
-        }
-      })();
+      // V5.10.1：登入後不再預抓五科題庫、不再自動讀完整信箱。
+      // 挑戰資料只在學生真的點「對戰」時讀；信箱只在學生點「信箱」時讀。
       if(currentTab==='home')renderHome();
-      if(currentTab==='challenge')renderChallengeHome();
       renderYard();
       return bundle;
     }catch(e){
@@ -502,15 +520,15 @@ async function prefetchStudentData(){
 }
 
 function startBackgroundMailboxRefresh(){
-  if(backgroundMailTimer)clearInterval(backgroundMailTimer);
-  // 進站後延遲 45 秒再背景更新，之後每 5 分鐘更新一次，不阻塞任何按鈕。
-  setTimeout(()=>refreshMailboxInBackground(false),45000);
-  backgroundMailTimer=setInterval(()=>refreshMailboxInBackground(false),300000);
+  // V5.10.1 教室多人模式：不再定時輪詢信箱。
+  // 學生真正進入信箱時才向後端讀一次，避免全班每 5 分鐘同時打 Apps Script。
+  if(backgroundMailTimer){clearInterval(backgroundMailTimer);backgroundMailTimer=null;}
 }
 async function refreshMailboxInBackground(forceRender=false){
   if(!currentId)return;
   if(mailRefreshPromise)return mailRefreshPromise;
-  mailRefreshPromise=gs('getMailboxFresh',currentId)
+  // 主動讀信箱時才呼叫後端；這個呼叫不要蓋住整個遊戲畫面。
+  mailRefreshPromise=gsRaw('getMailboxFresh',currentId)
     .then(r=>{
       if(Array.isArray(r?.mailbox)){mailbox=r.mailbox;saveLocal('mailbox',mailbox);}
       mailboxLoaded=true;mailboxAt=Date.now();
@@ -522,10 +540,11 @@ async function refreshMailboxInBackground(forceRender=false){
       if(forceRender && currentTab==='mail')renderMailFromCache();
       return r;
     })
-    .catch(()=>null)
+    .catch(e=>{console.warn('信箱載入失敗',e);return null;})
     .finally(()=>mailRefreshPromise=null);
   return mailRefreshPromise;
 }
+
 function normalizeBirthdayInput(v){const d=String(v||'').replace(/[^0-9]/g,'');if(d.length===3)return '0'+d[0]+'/'+d.slice(1);if(d.length>=4)return d.slice(-4,-2)+'/'+d.slice(-2);const m=String(v||'').match(/(\d{1,2})\D+(\d{1,2})/);return m?String(Number(m[1])).padStart(2,'0')+'/'+String(Number(m[2])).padStart(2,'0'):String(v||'').trim();}
 async function login(){
   const id=sid.value.trim(),bd=normalizeBirthdayInput(bday.value);
@@ -558,6 +577,7 @@ async function login(){
 
     // 真正的遊戲資料改成背景一次載入，不阻塞登入。
     hydrateAfterLoginV596();
+    // 教室多人模式：不啟動定時信箱輪詢。
     startBackgroundMailboxRefresh();
   }catch(e){loginMsg.textContent=e.message||e;}
 }
@@ -821,24 +841,21 @@ function createPet(p,i){
 }
 function wanderPets(){
   if(!state)return;
-  const moved=[];
   state.pets.filter(p=>String(p.landId)===String(state.activeLandId)).forEach(p=>{
     if(String(DRAGGING_PET_ID)===String(p.petId))return;
     const el=document.querySelector(`.pet-pos[data-pet="${CSS.escape(p.petId)}"]`);if(!el)return;
     const x=4+Math.random()*82;
     const yy=p.movementType==='地面型'?(58+Math.random()*22):(10+Math.random()*70);
-    el.style.left=x+'%';el.style.top=yy+'%';p.x=x;p.y=yy;
-    moved.push({petId:p.petId,landId:p.landId,x,y:yy});
+    el.style.left=x+'%';
+    el.style.top=yy+'%';
+
+    // 只改畫面，不改 p.x / p.y，也不存 Google Sheet。
+    // 真正拖曳寵物放手時 createPet() 才會儲存位置。
   });
-  positionSaveTick++;
-  if(moved.length && positionSaveTick%6===0 && !positionSaveBusy){
-    positionSaveBusy=true;
-    gsRaw('savePetPositionsBatch',currentId,moved).catch(()=>{}).finally(()=>positionSaveBusy=false);
-  }
 }
 
 function petTalk(p,el){document.querySelectorAll('.bubble').forEach(x=>x.remove());const b=document.createElement('div');b.className='bubble';b.textContent=p.dialogs[Math.floor(Math.random()*p.dialogs.length)];b.style.left=(el.offsetLeft+el.offsetWidth/2)+'px';b.style.top=el.offsetTop+'px';yard.appendChild(b);setTimeout(()=>b.remove(),2400);}
-function switchTab(tab,btn){currentTab=tab;if(tab==='home')switchMainMode('home');if(tab==='challenge')switchMainMode('battle');document.querySelectorAll('.tabbtn').forEach(x=>x.classList.remove('active'));btn?.classList.add('active');renderCurrentTab();}
+function switchTab(tab,btn){currentTab=tab;if(tab==='home')switchMainMode('home');if(tab==='challenge'){switchMainMode('battle');ensureChallengeHomeMeta();}document.querySelectorAll('.tabbtn').forEach(x=>x.classList.remove('active'));btn?.classList.add('active');renderCurrentTab();}
 async function renderCurrentTab(){if(currentTab==='home')renderHome();if(currentTab==='upgrade')await renderUpgrade();if(currentTab==='bag')await renderBag();if(currentTab==='challenge')renderChallengeHome();if(currentTab==='mail')await renderMail();if(currentTab==='shop')await renderShop();}
 function renderHome(){
   const petsHere=state.pets.filter(p=>String(p.landId)===String(state.activeLandId));
@@ -918,33 +935,77 @@ async function useExp(itemId){
   }catch(e){alert(e.message||e);}
 }
 async function renderBag(){if(!Array.isArray(inventory)||!inventory.length)inventory=await gs('getInventory',currentId);panel.innerHTML=`<h3>🎒 我的道具</h3>${inventory.map(x=>`<div class="itemcard" style="min-height:86px">${x.config?.['圖片']?`<img src="${esc(x.config['圖片'])}" style="width:76px;height:76px;object-fit:contain;float:left;margin-right:10px">`:''}<b>${esc(x.config?.['名稱']||x.itemId)}</b> ×${x.quantity}<br><span class="small">${esc(x.config?.['類型']||'')}｜${esc(x.config?.['說明']||'')}</span><div style="clear:both"></div></div>`).join('')||'<div class="itemcard">背包目前是空的。</div>'}`;}
+async function ensureChallengeHomeMeta(){
+  if(CHALLENGE_HOME_META)return CHALLENGE_HOME_META;
+  if(CHALLENGE_HOME_LOADING)return CHALLENGE_HOME_LOADING;
+  CHALLENGE_HOME_LOADING=gsRaw('getChallengeHomeBundleV5101',currentId)
+    .then(r=>{
+      CHALLENGE_HOME_META=r||{counts:{},status:{}};
+      if(state)state.challengeStatus=CHALLENGE_HOME_META.status||{};
+      if(currentTab==='challenge')renderChallengeHome();
+      return CHALLENGE_HOME_META;
+    })
+    .catch(e=>{
+      console.warn('挑戰首頁資料載入失敗',e);
+      CHALLENGE_HOME_META={counts:{},status:state?.challengeStatus||{}};
+      return CHALLENGE_HOME_META;
+    })
+    .finally(()=>CHALLENGE_HOME_LOADING=null);
+  return CHALLENGE_HOME_LOADING;
+}
+
 function renderChallengeHome(){
   const subjects=['國語','數學','英文','自然','社會'];
+  const meta=CHALLENGE_HOME_META;
+  if(!meta && !CHALLENGE_HOME_LOADING)ensureChallengeHomeMeta();
+
   panel.innerHTML=`<h3>⚔️ 寵物對戰挑戰</h3>
     <p class="small">只有題庫中有「啟用中題目」的科目才可以進入對戰。</p>
     ${subjects.map(s=>{
-      const st=state.challengeStatus?.[s]||{correct:0,wrong:0,locked:false};
-      const loaded=!!QUESTION_BANK_LOADED[s];
-      const count=Array.isArray(QUESTION_BANK_CACHE[s])?QUESTION_BANK_CACHE[s].length:0;
-      const noQuestions=loaded && count===0;
-      const disabled=!loaded || noQuestions || st.locked;
+      const st=(meta?.status?.[s])||(state.challengeStatus?.[s])||{correct:0,wrong:0,locked:false};
+      const count=meta?Number(meta.counts?.[s]||0):null;
+      const loading=!meta;
+      const noQuestions=!loading && count===0;
+      const disabled=loading || noQuestions || st.locked;
 
       let label='進入對戰';
-      if(!loaded) label='題庫載入中…';
-      else if(noQuestions) label='暫無題目';
-      else if(st.locked) label='今日已結束';
+      if(loading)label='檢查題庫中…';
+      else if(noQuestions)label='暫無題目';
+      else if(st.locked)label='今日已結束';
 
       return `<div class="subjectcard ${disabled?'subject-disabled':''}">
-        <b>${s}</b>　答對 ${st.correct}　
-        <span class="lives">${'❤️'.repeat(Math.max(0,3-st.wrong))}${'🖤'.repeat(st.wrong)}</span>
-        ${loaded?`<span class="small">｜題目 ${count} 題</span>`:''}
+        <b>${s}</b>　答對 ${Number(st.correct||0)}
+        <span class="lives">${'❤️'.repeat(Math.max(0,3-Number(st.wrong||0)))}${'🖤'.repeat(Math.min(3,Number(st.wrong||0)))}</span>
+        ${loading?'':`<span class="small">｜題目 ${count} 題</span>`}
         <br>
         <button class="btn ${disabled?'gray':'blue'}" ${disabled?'disabled':''}
           onclick="chooseChallenge('${s}')">${label}</button>
       </div>`;
     }).join('')}`;
 }
-function chooseChallenge(subject){if(!QUESTION_BANK_LOADED[subject]||!(QUESTION_BANK_CACHE[subject]||[]).length)return;challenge.subject=subject;switchMainMode('battle');renderBattleMain();panel.innerHTML=`<h3>⚔️ ${subject}對戰</h3><label>選擇出戰寵物</label><select id="chPet" class="full">${state.pets.map(p=>`<option value="${p.petId}">${esc(p.name)} Lv.${p.level}・第${p.stage}階</option>`).join('')}</select><div class="nav"><button class="btn blue" onclick="startChallengeUI()">開始戰鬥</button><button class="btn gray" onclick="renderChallengeHome()">返回</button></div>`;}
+async function chooseChallenge(subject){
+  const count=Number(CHALLENGE_HOME_META?.counts?.[subject]||0);
+  if(!count)return;
+
+  challenge.subject=subject;
+  switchMainMode('battle');
+  renderBattleMain();
+
+  if(!QUESTION_BANK_LOADED[subject]){
+    panel.innerHTML=`<h3>⚔️ ${esc(subject)}對戰</h3><div class="petcard">載入${esc(subject)}題庫中…</div>`;
+    showWaiting('載入題庫中...');
+    try{await ensureQuestionBank(subject);}finally{hideWaiting();}
+  }
+  if(!(QUESTION_BANK_CACHE[subject]||[]).length){
+    renderChallengeHome();
+    return;
+  }
+
+  panel.innerHTML=`<h3>⚔️ ${esc(subject)}對戰</h3>
+    <label>選擇出戰寵物</label>
+    <select id="chPet" class="full">${state.pets.map(p=>`<option value="${p.petId}">${esc(p.name)} Lv.${p.level}・第${p.stage}階</option>`).join('')}</select>
+    <div class="nav"><button class="btn blue" onclick="startChallengeUI()">開始戰鬥</button><button class="btn gray" onclick="renderChallengeHome()">返回</button></div>`;
+}
 function getPetSkills(pet){const cfg=PET_CONFIGS[String(pet.petId)]||{};const arr=Array.isArray(cfg.skills)?cfg.skills:[];return arr.filter(s=>Number(s.minStage||1)<=Number(pet.stage||1));}
 async function startChallengeUI(){
   challenge.petId=chPet.value;
@@ -1078,7 +1139,7 @@ async function sendBattleAnswer(ans){
     challenge.monsterMaxHp=getMonsterHp(challenge.monsterCfg,challenge.monsterNo);
     challenge.monsterHp=challenge.monsterMaxHp;
   }
-  if(challenge.pending.length>=8)flushChallengeAnswers(false);
+  if(challenge.pending.length>=12)flushChallengeAnswers(false);
   renderBattleMain();renderBattle();
 }
 async function loadMoreBattleQuestions(){
@@ -1109,14 +1170,15 @@ async function sendAnswer(ans){
   challenge.qIndex++;
   if(challenge.qIndex>=challenge.questions.length){challenge.question=null;renderQuestion(challenge.status,msg);}
   else{challenge.question=challenge.questions[challenge.qIndex];renderQuestion(challenge.status,msg);}
-  if(challenge.pending.length>=8)flushChallengeAnswers(false);
+  if(challenge.pending.length>=12)flushChallengeAnswers(false);
 }
 async function flushChallengeAnswers(force){
   if(challenge.syncing){if(force)await challenge.syncing;else return;}
   if(!challenge.pending.length)return;
   const batch=challenge.pending.splice(0,challenge.pending.length);
-  challenge.syncing=gs('syncChallengeBatch',currentId,challenge.subject,challenge.petId,batch)
-    .then(r=>{if(r?.status){challenge.status={...r.status};state.challengeStatus=state.challengeStatus||{};state.challengeStatus[challenge.subject]={...r.status};}return r;})
+  const syncCall=force?gs('syncChallengeBatch',currentId,challenge.subject,challenge.petId,batch):gsRaw('syncChallengeBatch',currentId,challenge.subject,challenge.petId,batch);
+  challenge.syncing=syncCall
+    .then(r=>{if(r?.status){challenge.status={...r.status};state.challengeStatus=state.challengeStatus||{};state.challengeStatus[challenge.subject]={...r.status};if(CHALLENGE_HOME_META?.status)CHALLENGE_HOME_META.status[challenge.subject]={...r.status};}return r;})
     .catch(e=>{challenge.pending.unshift(...batch);if(force)throw e;})
     .finally(()=>challenge.syncing=null);
   if(force)return await challenge.syncing;
@@ -1137,9 +1199,8 @@ async function renderMail(){
     if(Array.isArray(local)){mailbox=local;mailboxLoaded=true;mailboxAt=Date.now();}
   }
   if(mailboxLoaded){
+    // 有快取就直接顯示；不自動打後端。需要最新內容時可按「更新信箱」。
     renderMailFromCache();
-    // 超過 60 秒才在背景偷偷更新，不阻塞畫面。
-    if(Date.now()-mailboxAt>60000)refreshMailboxInBackground(true);
     return;
   }
   panel.innerHTML='<h3>📬 信箱</h3><div class="mailcard">正在載入信箱…</div>';
