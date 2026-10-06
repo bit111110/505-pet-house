@@ -1,4 +1,4 @@
-const FRONTEND_BUILD='20261006-1735';
+const FRONTEND_BUILD='20261006-1955';
 const BUILTIN_LAND_BACKGROUNDS = {
   'LAND001': 'assets/maps/grassland.png',
   'LAND002': 'assets/maps/forest.png',
@@ -243,6 +243,19 @@ let mailboxLoaded=false,mailboxAt=0,mailRefreshPromise=null,backgroundMailTimer=
 const CLIENT_CACHE={shop:null,shopAt:0,inventory:null,inventoryAt:0};
 const QUESTION_BANK_CACHE={};
 const QUESTION_BANK_LOADED={};
+const API_DIAG_LOG=[];
+const API_DIAG_MAX=80;
+function recordApiDiag(fn,ms,ok,message=''){
+  API_DIAG_LOG.unshift({at:Date.now(),fn:String(fn),ms:Number(ms||0),ok:!!ok,message:String(message||'')});
+  if(API_DIAG_LOG.length>API_DIAG_MAX)API_DIAG_LOG.length=API_DIAG_MAX;
+}
+function diagLevel(ms){
+  if(ms<2000)return {label:'🟢 良好',cls:'success'};
+  if(ms<5000)return {label:'🟡 尚可',cls:''};
+  if(ms<10000)return {label:'🟠 偏慢',cls:'wrong'};
+  return {label:'🔴 很慢',cls:'wrong'};
+}
+
 let CHALLENGE_HOME_META=null;
 let CHALLENGE_HOME_LOADING=null;
 const QUESTION_BROWSER_CACHE_MS=60*60*1000;
@@ -421,6 +434,7 @@ async function gsRaw(fn,...args){
   }
   const controller=new AbortController();
   const timer=setTimeout(()=>controller.abort(),25000);
+  const t0=performance.now();
   try{
     const response=await fetch(window.API_URL,{
       method:'POST',
@@ -432,14 +446,25 @@ async function gsRaw(fn,...args){
     });
     const text=await response.text();
     let payload;
-    try{payload=JSON.parse(text);}catch(e){throw new Error('API 回傳格式錯誤：'+text.slice(0,120));}
-    if(!payload || payload.apiOk!==true) throw new Error(payload?.message||'API 呼叫失敗');
+    try{payload=JSON.parse(text);}catch(e){
+      recordApiDiag(fn,performance.now()-t0,false,'API 回傳非 JSON');
+      throw new Error('API 回傳格式錯誤：'+text.slice(0,120));
+    }
+    if(!payload || payload.apiOk!==true){
+      recordApiDiag(fn,performance.now()-t0,false,payload?.message||'API 呼叫失敗');
+      throw new Error(payload?.message||'API 呼叫失敗');
+    }
+    recordApiDiag(fn,performance.now()-t0,true,'');
     return payload.result;
   }catch(e){
-    if(e.name==='AbortError') throw new Error('連線逾時，請再試一次。');
+    if(e.name==='AbortError'){
+      recordApiDiag(fn,performance.now()-t0,false,'連線逾時');
+      throw new Error('連線逾時，請再試一次。');
+    }
     throw e;
   }finally{clearTimeout(timer);}
 }
+
 async function gs(fn,...args){
   const shouldShow = ![
     'getUnreadMailCountFast',
@@ -1473,6 +1498,14 @@ async function loadAdmin(){
       <div id="admin-config-status" class="small" style="margin-top:8px"></div>
     </div>
 
+    <div class="petcard" style="margin-bottom:12px">
+      <div class="row" style="justify-content:space-between;align-items:center">
+        <div><b>📊 教室連線診斷</b><div class="small">只測回應速度，不寫入 Google Sheet。</div></div>
+        <button class="btn secondary" onclick="runConnectionDiagnostics()">立即測試</button>
+      </div>
+      <div id="diagSummary" style="margin-top:10px"></div>
+      <div id="diagRecent" class="small" style="margin-top:8px"></div>
+    </div>
     <div class="bulk-admin-card">
       <b>🎁 批量發放道具</b>
       <div class="row" style="margin-top:8px">
@@ -1524,6 +1557,46 @@ async function adminCoinCustom(id){
     const r=await gs('adminAddCoinsFastV599',adminPassword,id,amount,'課堂獎勵');
     const el=document.getElementById('coin-'+id);if(el)el.textContent=Number(r.coins||0);
   }catch(e){alert(e.message||e);}
+}
+
+
+function renderDiagRecent(){
+  const box=document.getElementById('diagRecent');
+  if(!box)return;
+  const rows=API_DIAG_LOG.slice(0,10);
+  box.innerHTML=rows.length?rows.map(x=>{
+    const d=diagLevel(x.ms);
+    const time=new Date(x.at).toLocaleTimeString('zh-TW',{hour12:false});
+    return `<div>${time}｜${esc(x.fn)}｜${(x.ms/1000).toFixed(2)} 秒｜${x.ok?d.label:'❌ 失敗'}</div>`;
+  }).join(''):'尚無紀錄';
+}
+async function timedDiag(label,fn){
+  const t0=performance.now();
+  try{
+    await fn();
+    return {label,ms:performance.now()-t0,ok:true};
+  }catch(e){
+    return {label,ms:performance.now()-t0,ok:false,error:e.message||String(e)};
+  }
+}
+async function runConnectionDiagnostics(){
+  const box=document.getElementById('diagSummary');
+  if(box)box.innerHTML='測試中…';
+  const tests=[];
+  tests.push(await timedDiag('API 基本回應',()=>gsRaw('diagnosticPingV5103')));
+  if(currentId){
+    tests.push(await timedDiag('學生基本資料',()=>gsRaw('getPostLoginBundleV5101',currentId)));
+    tests.push(await timedDiag('挑戰首頁',()=>gsRaw('getChallengeHomeBundleV5101',currentId)));
+  }
+  if(box){
+    box.innerHTML=tests.map(t=>{
+      const d=diagLevel(t.ms);
+      return `<div class="itemcard" style="margin:6px 0"><b>${esc(t.label)}</b>：
+        <span class="${t.ok?d.cls:'wrong'}">${(t.ms/1000).toFixed(2)} 秒｜${t.ok?d.label:'❌ 失敗'}</span>
+        ${t.error?`<div class="small wrong">${esc(t.error)}</div>`:''}</div>`;
+    }).join('');
+  }
+  renderDiagRecent();
 }
 
 async function adminRefreshGameConfig(){
