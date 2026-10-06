@@ -1,4 +1,4 @@
-const FRONTEND_BUILD='20261006-2118';
+const FRONTEND_BUILD='20261006-2358';
 const BUILTIN_LAND_BACKGROUNDS = {
   'LAND001': 'assets/maps/grassland.png',
   'LAND002': 'assets/maps/forest.png',
@@ -238,7 +238,7 @@ async function refreshLiveLandCatalog(forceRender=false){
   return rows;
 }
 
-let currentId='',state=null,currentTab='home',mainMode='home',wanderTimer=null,inventory=[],mailbox=[],shop=null,adminData=null,challenge={subject:'',petId:'',question:null};
+let currentId='',state=null,currentTab='home',mainMode='home',wanderTimer=null,inventory=[],mailbox=[],shop=null,adminData=null,challenge={subject:'',petId:'',question:null,savedProgress:null,saving:false};
 let mailboxLoaded=false,mailboxAt=0,mailRefreshPromise=null,backgroundMailTimer=null;
 const CLIENT_CACHE={shop:null,shopAt:0,inventory:null,inventoryAt:0};
 const QUESTION_BANK_CACHE={};
@@ -1062,6 +1062,7 @@ function renderChallengeHome(){
 }
 async function chooseChallenge(subject){
   challenge.subject=subject;
+  challenge.savedProgress=null;
   switchMainMode('battle');
   renderBattleMain();
 
@@ -1077,11 +1078,78 @@ async function chooseChallenge(subject){
     return;
   }
 
+  let saved=null;
+  try{saved=await gsRaw('getBattleProgressV5105',currentId,subject);}catch(e){}
+  challenge.savedProgress=saved&&saved.exists?saved:null;
+
+  const savedPet=challenge.savedProgress
+    ? state.pets.find(p=>String(p.petId)===String(challenge.savedProgress.petId))
+    : null;
+
   panel.innerHTML=`<h3>⚔️ ${esc(subject)}對戰</h3>
-    <label>選擇出戰寵物</label>
-    <select id="chPet" class="full">${state.pets.map(p=>`<option value="${p.petId}">${esc(p.name)} Lv.${p.level}・第${p.stage}階</option>`).join('')}</select>
-    <div class="nav"><button class="btn blue" onclick="startChallengeUI()">開始戰鬥</button><button class="btn gray" onclick="renderChallengeHome()">返回</button></div>`;
+    ${challenge.savedProgress?`<div class="petcard">
+      <b>💾 發現對戰存檔</b><br>
+      ${savedPet?`${esc(savedPet.name)} Lv.${savedPet.level}`:`${esc(challenge.savedProgress.petId)}`}<br>
+      <span class="small">目前：怪物 ${challenge.savedProgress.monsterNo}｜HP ${Math.ceil(challenge.savedProgress.monsterHp)} / ${challenge.savedProgress.monsterMaxHp}</span>
+      <div class="nav">
+        <button class="btn blue" onclick="resumeSavedChallengeV5105()">▶️ 繼續對戰</button>
+        <button class="btn red" onclick="startNewChallengeV5105()">🔄 重新開始</button>
+      </div>
+    </div>`:''}
+    <div class="petcard">
+      <label>${challenge.savedProgress?'或選擇新的寵物重新開始':'選擇出戰寵物'}</label>
+      <select id="chPet" class="full">${state.pets.map(p=>`<option value="${p.petId}">${esc(p.name)} Lv.${p.level}・第${p.stage}階</option>`).join('')}</select>
+      <div class="nav"><button class="btn ${challenge.savedProgress?'secondary':'blue'}" onclick="${challenge.savedProgress?'startNewChallengeV5105()':'startChallengeUI()'}">${challenge.savedProgress?'以選擇的寵物重新開始':'開始戰鬥'}</button><button class="btn gray" onclick="renderChallengeHome()">返回</button></div>
+    </div>`;
 }
+
+async function startNewChallengeV5105(){
+  if(challenge.savedProgress){
+    if(!confirm('重新開始會刪除這一科目前的怪物進度，答題紀錄不會被刪除。確定重新開始嗎？'))return;
+    try{await gsRaw('clearBattleProgressV5105',currentId,challenge.subject);}catch(e){alert(e.message||e);return;}
+    challenge.savedProgress=null;
+  }
+  startChallengeUI();
+}
+
+async function resumeSavedChallengeV5105(){
+  const save=challenge.savedProgress;
+  if(!save)return startChallengeUI();
+  try{
+    const localStatus=state?.challengeStatus?.[challenge.subject]||{correct:0,wrong:0,exp:0,locked:false};
+    if(localStatus.locked || Number(localStatus.wrong||0)>=3){
+      showLocked({locked:true,status:localStatus,resetAt:'明早 7:00'});
+      return;
+    }
+    const pet=state.pets.find(p=>String(p.petId)===String(save.petId));
+    if(!pet)throw new Error('存檔使用的寵物目前不在你的寵物清單中');
+
+    let pool=localQuestionBatch(challenge.subject,Array.isArray(save.seen)?save.seen:[],30);
+    if(!pool.length){
+      await ensureQuestionBank(challenge.subject);
+      pool=localQuestionBatch(challenge.subject,Array.isArray(save.seen)?save.seen:[],30);
+    }
+    if(!pool.length)pool=localQuestionBatch(challenge.subject,[],30);
+    if(!pool.length)throw new Error('這個科目目前沒有可用題目');
+
+    challenge.petId=String(save.petId);
+    challenge.questions=pool;
+    challenge.qIndex=0;
+    challenge.status={...localStatus};
+    challenge.pending=[];
+    challenge.seen=Array.isArray(save.seen)?save.seen.slice(-80):[];
+    challenge.monsterNo=Math.max(1,Number(save.monsterNo||1));
+    challenge.monsterCfg=getMonsterForBattle(challenge.subject,challenge.monsterNo);
+    challenge.monsterMaxHp=getMonsterHp(challenge.monsterCfg,challenge.monsterNo);
+    const savedHp=Math.max(1,Number(save.monsterHp||challenge.monsterMaxHp));
+    challenge.monsterHp=Math.min(challenge.monsterMaxHp,savedHp);
+    challenge.selectedSkill=null;
+    challenge.question=null;
+    challenge.lastMsg=`<span class="success">💾 已讀取存檔，從怪物 ${challenge.monsterNo} 繼續。</span>`;
+    switchMainMode('battle');renderBattleMain();renderBattle();
+  }catch(e){alert(e.message||e);}
+}
+
 function getPetSkills(pet){const cfg=PET_CONFIGS[String(pet.petId)]||{};const arr=Array.isArray(cfg.skills)?cfg.skills:[];return arr.filter(s=>Number(s.minStage||1)<=Number(pet.stage||1));}
 async function startChallengeUI(){
   challenge.petId=chPet.value;
@@ -1125,7 +1193,7 @@ function renderBattle(){
   <div class="petcard"><b>${esc(pet.name)}</b> Lv.${pet.level}・第${pet.stage}階<br><span class="small">怪物 ${challenge.monsterNo}｜HP ${Math.ceil(challenge.monsterHp)} / ${challenge.monsterMaxHp}</span></div>
   ${challenge.lastMsg?`<div style="margin:8px 0">${challenge.lastMsg}</div>`:''}
   <h4>選擇技能</h4><div class="skill-grid">${skills.map(s=>`<button class="btn purple skill-btn" onclick="useBattleSkill('${s.id}')"><b>${s.kind==='general'?'⚔️':attributeIconHtml(s.attribute||getPetAttribute(pet),20)} ${esc(s.name)}</b><br><span class="small" style="color:white">威力 ${s.damage}</span></button>`).join('')}</div>
-  <div class="nav"><button class="btn gray" onclick="finishChallengeUI()">結束對戰</button><button class="btn secondary" onclick="switchMainMode('home')">看一下小屋</button></div>`;
+  <div class="nav"><button class="btn blue" onclick="saveBattleAndExitV5105(this)">💾 儲存並離開</button><button class="btn gray" onclick="finishChallengeUI()">結束對戰</button><button class="btn secondary" onclick="switchMainMode('home')">看一下小屋</button></div>`;
 }
 function useBattleSkill(skillId){const pet=state.pets.find(p=>p.petId===challenge.petId);const skill=getConfiguredPetSkills(pet).find(s=>String(s.id)===String(skillId));if(!skill)return;challenge.selectedSkill=skill;if(!challenge.questions?.length || challenge.qIndex>=challenge.questions.length){loadMoreBattleQuestions();return;}challenge.question=challenge.questions[challenge.qIndex];renderBattleQuestion();}
 
@@ -1266,21 +1334,60 @@ async function loadMoreChallengeQuestions(){
     challenge.questions=qs||[];challenge.qIndex=0;challenge.question=challenge.questions[0]||null;renderQuestion(challenge.status);
   }catch(e){alert(e.message||e);}
 }
-async function finishChallengeUI(){try{await flushChallengeAnswers(true);currentTab='challenge';switchMainMode('battle');challenge.subject='';challenge.petId='';renderBattleMain();renderChallengeHome();}catch(e){alert(e.message||e);}}
-function showLocked(r){panel.innerHTML=`<div class="qbox"><h3>今天這科已挑戰結束</h3><p>明早 7:00 後會重新有 3 次機會。</p><p>重置：${esc(r.resetAt)}</p><button class="btn gray" onclick="renderChallengeHome()">返回</button></div>`;}
-async function renderMail(){
-  // 有快取就立刻畫出來，不等待 Apps Script。
-  if(!mailboxLoaded){
-    const local=loadLocal('mailbox');
-    if(Array.isArray(local)){mailbox=local;mailboxLoaded=true;mailboxAt=Date.now();}
+
+async function saveBattleAndExitV5105(btn){
+  if(challenge.saving)return;
+  if(!challenge.subject || !challenge.petId)return;
+  challenge.saving=true;
+  const oldText=btn?.innerHTML||'';
+  if(btn){btn.disabled=true;btn.innerHTML='⏳ 儲存中...';}
+  try{
+    // 先把尚未同步的答題結果送出，避免答題紀錄與怪物進度不同步。
+    await flushChallengeAnswers(true);
+    const payload={
+      subject:challenge.subject,
+      petId:challenge.petId,
+      monsterNo:Math.max(1,Number(challenge.monsterNo||1)),
+      monsterHp:Math.max(1,Number(challenge.monsterHp||1)),
+      monsterMaxHp:Math.max(1,Number(challenge.monsterMaxHp||1)),
+      seen:Array.isArray(challenge.seen)?challenge.seen.slice(-80):[]
+    };
+    await gsRaw('saveBattleProgressV5105',currentId,payload);
+    challenge.savedProgress=null;
+    challenge.question=null;
+    challenge.selectedSkill=null;
+    currentTab='challenge';
+    switchMainMode('battle');
+    renderBattleMain();
+    renderChallengeHome();
+    const note=document.createElement('div');
+    note.className='success';
+    note.textContent=`💾 已儲存：${payload.subject}・怪物 ${payload.monsterNo}`;
+    panel.prepend(note);
+    setTimeout(()=>note.remove(),2200);
+  }catch(e){
+    alert('儲存失敗：'+(e.message||e));
+    if(btn){btn.disabled=false;btn.innerHTML=oldText;}
+  }finally{
+    challenge.saving=false;
   }
-  if(mailboxLoaded){
-    // 有快取就直接顯示；不自動打後端。需要最新內容時可按「更新信箱」。
-    renderMailFromCache();
-    return;
+}
+
+async function finishChallengeUI(){
+  if(challenge.subject && challenge.petId){
+    const ok=confirm('這會結束目前畫面，但不會儲存這一隻怪物的 HP 與怪物編號。若想下次接著打，請按「💾 儲存並離開」。\n\n仍要直接結束嗎？');
+    if(!ok)return;
   }
-  panel.innerHTML='<h3>📬 信箱</h3><div class="mailcard">正在載入信箱…</div>';
-  await refreshMailboxInBackground(true);
+  try{
+    await flushChallengeAnswers(true);
+    currentTab='challenge';
+    switchMainMode('battle');
+    challenge.subject='';
+    challenge.petId='';
+    challenge.savedProgress=null;
+    renderBattleMain();
+    renderChallengeHome();
+  }catch(e){alert(e.message||e);}
 }
 function renderMailFromCache(){
   const unclaimed=mailbox.filter(m=>!(m['是否領取']===true||String(m['是否領取']).toUpperCase()==='TRUE')).length;
