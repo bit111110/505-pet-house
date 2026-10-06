@@ -1,4 +1,4 @@
-const FRONTEND_BUILD='20261006-1955';
+const FRONTEND_BUILD='20261006-2118';
 const BUILTIN_LAND_BACKGROUNDS = {
   'LAND001': 'assets/maps/grassland.png',
   'LAND002': 'assets/maps/forest.png',
@@ -258,10 +258,12 @@ function diagLevel(ms){
 
 let CHALLENGE_HOME_META=null;
 let CHALLENGE_HOME_LOADING=null;
-const QUESTION_BROWSER_CACHE_MS=60*60*1000;
+const QUESTION_BROWSER_CACHE_MS=6*60*60*1000;
 let POST_LOGIN_LOADING=null;
 let QUESTION_BANK_READY=false;
 let adminBusyItem=new Set();
+let EXP_USE_BUSY=false;
+
 let DRAGGING_PET_ID='';
 
 function cacheFresh(ts,ms=300000){return Date.now()-ts<ms;}
@@ -361,6 +363,7 @@ async function hydrateAfterLoginV596(){
         gsRaw('getPostLoginBundleV5101',currentId)
       ]);
       if(bundle?.core)applyStudentState(bundle.core);
+      if(bundle?.challengeStatus && state)state.challengeStatus=bundle.challengeStatus;
       if(bundle?.runtime){
         const r=bundle.runtime;
         if(Array.isArray(r.inventory)){
@@ -378,6 +381,7 @@ async function hydrateAfterLoginV596(){
       // 挑戰資料只在學生真的點「對戰」時讀；信箱只在學生點「信箱」時讀。
       if(currentTab==='home')renderHome();
       renderYard();
+      await waitForLoginImagesV5104();
       return bundle;
     }catch(e){
       console.warn('登入後背景資料載入失敗',e);
@@ -408,6 +412,7 @@ function hideWaiting(){
 function waitingLabelFor(fn){
   const map={
     loginFastV596:'登入中...',
+    getPostLoginBundleV5101:'載入小屋與圖片中...',
     loginCore:'登入中...',
     getPostLoginBundleV596:'載入小屋資料中...',
     getQuestionBankSubjectFast:'載入題庫中...',
@@ -488,6 +493,41 @@ function formatMathText(v){
     (m,prefix,n,d)=>`${prefix}<span class="math-frac"><span class="num">${n}</span><span class="den">${d}</span></span>`);
 }
 
+
+
+function waitImageLoadedV5104(img,timeoutMs=7000){
+  return new Promise(resolve=>{
+    if(!img || (img.complete && img.naturalWidth>0)){resolve(true);return;}
+    let done=false;
+    const finish=(ok)=>{if(done)return;done=true;clearTimeout(timer);img.removeEventListener('load',onLoad);img.removeEventListener('error',onErr);resolve(ok);};
+    const onLoad=()=>finish(true),onErr=()=>finish(false);
+    img.addEventListener('load',onLoad,{once:true});
+    img.addEventListener('error',onErr,{once:true});
+    const timer=setTimeout(()=>finish(false),timeoutMs);
+  });
+}
+async function waitForLoginImagesV5104(){
+  const yard=document.getElementById('yard');
+  if(!yard)return;
+  showWaiting('圖片載入中...');
+  try{
+    const imgs=[...yard.querySelectorAll('img')];
+    const bg=(yard.style.backgroundImage||'').match(/url\(["']?(.*?)["']?\)/i)?.[1]||'';
+    const tasks=imgs.map(img=>waitImageLoadedV5104(img,7000));
+    if(bg){
+      tasks.push(new Promise(resolve=>{
+        const im=new Image();let done=false;
+        const finish=()=>{if(done)return;done=true;clearTimeout(timer);resolve(true);};
+        im.onload=finish;im.onerror=finish;
+        const timer=setTimeout(finish,7000);
+        im.src=bg;
+      }));
+    }
+    if(tasks.length)await Promise.allSettled(tasks);
+  }finally{
+    hideWaiting();
+  }
+}
 
 function applyStudentState(s){
   state=applyStaticConfigsToState(s);
@@ -880,7 +920,7 @@ function wanderPets(){
 }
 
 function petTalk(p,el){document.querySelectorAll('.bubble').forEach(x=>x.remove());const b=document.createElement('div');b.className='bubble';b.textContent=p.dialogs[Math.floor(Math.random()*p.dialogs.length)];b.style.left=(el.offsetLeft+el.offsetWidth/2)+'px';b.style.top=el.offsetTop+'px';yard.appendChild(b);setTimeout(()=>b.remove(),2400);}
-function switchTab(tab,btn){currentTab=tab;if(tab==='home')switchMainMode('home');if(tab==='challenge'){switchMainMode('battle');ensureChallengeHomeMeta();}document.querySelectorAll('.tabbtn').forEach(x=>x.classList.remove('active'));btn?.classList.add('active');renderCurrentTab();}
+function switchTab(tab,btn){currentTab=tab;if(tab==='home')switchMainMode('home');if(tab==='challenge'){switchMainMode('battle');}document.querySelectorAll('.tabbtn').forEach(x=>x.classList.remove('active'));btn?.classList.add('active');renderCurrentTab();}
 async function renderCurrentTab(){if(currentTab==='home')renderHome();if(currentTab==='upgrade')await renderUpgrade();if(currentTab==='bag')await renderBag();if(currentTab==='challenge')renderChallengeHome();if(currentTab==='mail')await renderMail();if(currentTab==='shop')await renderShop();}
 function renderHome(){
   const petsHere=state.pets.filter(p=>String(p.landId)===String(state.activeLandId));
@@ -910,7 +950,7 @@ async function renderUpgrade(){
         <div class="row">
           <button class="btn secondary" onclick="toggleAllExpItems(true)">全選</button>
           <button class="btn gray" onclick="toggleAllExpItems(false)">取消全選</button>
-          <button class="btn purple" onclick="useExpBatch()">批量使用勾選道具</button>
+          <button class="btn purple exp-action" onclick="useExpBatch(this)">批量使用勾選道具</button>
         </div>
         <div class="small">每個道具可輸入不同數量，也可以按「全部」快速填滿。</div>
       </div>
@@ -921,87 +961,99 @@ async function renderUpgrade(){
         <span class="small">+${x.config['效果值']} EXP/個</span>
         <div class="row" style="margin-top:6px">
           <input id="qty-${x.itemId}" type="number" min="1" max="${x.quantity}" value="1" style="width:80px">
-          <button class="btn secondary" onclick="document.getElementById('qty-${x.itemId}').value='${x.quantity}'">全部</button>
-          <button class="btn" onclick="useExp('${x.itemId}')">使用</button>
+          <button class="btn secondary exp-action" onclick="document.getElementById('qty-${x.itemId}').value='${x.quantity}'">全部</button>
+          <button class="btn exp-action" onclick="useExp('${x.itemId}',this)">使用</button>
         </div>
         <div style="clear:both"></div>
       </div>`).join('')}
     `:'<div class="itemcard">目前沒有經驗型道具。</div>'}`;
   upPet.onchange=renderUpPetInfo;renderUpPetInfo();
 }
+
+function setExpBusyV5104(on,label='處理中...'){
+  EXP_USE_BUSY=!!on;
+  document.querySelectorAll('.exp-action,.exp-batch-check,[id^="qty-"]').forEach(el=>{
+    el.disabled=!!on;
+  });
+  let note=document.getElementById('expBusyNote');
+  if(on){
+    if(!note){
+      note=document.createElement('div');
+      note.id='expBusyNote';
+      note.className='itemcard';
+      note.style.margin='8px 0';
+      const toolbar=document.querySelector('.batch-exp-toolbar');
+      (toolbar||panel)?.prepend(note);
+    }
+    note.innerHTML=`⏳ ${esc(label)}<div class="small">請勿連續點擊，完成後按鈕會自動恢復。</div>`;
+  }else if(note){
+    note.remove();
+  }
+}
 function toggleAllExpItems(on){document.querySelectorAll('.exp-batch-check').forEach(x=>x.checked=!!on);}
-async function useExpBatch(){
+async function useExpBatch(btn){
+  if(EXP_USE_BUSY)return;
   const petId=upPet.value;
   const uses=[...document.querySelectorAll('.exp-batch-check:checked')].map(x=>{
     const itemId=x.dataset.item;
     return {itemId,quantity:Math.max(1,Number(document.getElementById('qty-'+itemId)?.value||1))};
   });
   if(!uses.length){alert('請先勾選要使用的經驗道具');return;}
+  setExpBusyV5104(true,'經驗糖果使用中...');
   try{
-    const r=await gs('useExpItemsBatchV599',currentId,petId,uses);
+    const r=await gsRaw('useExpItemsBatchV599',currentId,petId,uses);
     inventory=Array.isArray(r.inventory)?r.inventory:inventory;
     const p=state.pets.find(x=>x.petId===petId);
     if(p){p.level=Number(r.level||p.level);p.exp=Number(r.exp??p.exp);p.stage=Number(r.stage||p.stage);p.expNeed=Number(r.expNeed||p.expNeed);p.image=getPetImage(p.petId,p.stage)||r.image||p.image;}
     await renderUpgrade();renderYard();
     const note=document.createElement('div');note.className='success';note.textContent=`✅ 批量使用完成，共 +${r.gained} EXP`;panel.prepend(note);setTimeout(()=>note.remove(),1800);
-  }catch(e){alert(e.message||e);}
+  }catch(e){
+    alert(e.message||e);
+  }finally{
+    setExpBusyV5104(false);
+  }
 }
 function renderUpPetInfo(){const p=state.pets.find(x=>x.petId===upPet.value);if(p)upPetInfo.innerHTML=petCardHtml(p);}
-async function useExp(itemId){
-  const petId=upPet.value,qty=Number(document.getElementById('qty-'+itemId).value||1);
+async function useExp(itemId,btn){
+  if(EXP_USE_BUSY)return;
+  const petId=upPet.value;
+  const qty=Math.max(1,Number(document.getElementById('qty-'+itemId)?.value||1));
+  setExpBusyV5104(true,'經驗糖果使用中...');
   try{
-    const btn=document.activeElement;if(btn)btn.disabled=true;
-    const r=await gs('useExpItem',currentId,itemId,petId,qty);
+    const r=await gsRaw('useExpItem',currentId,itemId,petId,qty);
     inventory=Array.isArray(r.inventory)?r.inventory:inventory;
     const p=state.pets.find(x=>x.petId===petId);
     if(p){p.level=Number(r.level||p.level);p.exp=Number(r.exp??p.exp);p.stage=Number(r.stage||p.stage);p.expNeed=Number(r.expNeed||p.expNeed);p.image=getPetImage(p.petId,p.stage)||r.image||p.image;}
     await renderUpgrade();renderYard();
     const note=document.createElement('div');note.className='success';note.textContent=`✅ +${r.gained} EXP`;panel.prepend(note);setTimeout(()=>note.remove(),1400);
-  }catch(e){alert(e.message||e);}
+  }catch(e){
+    alert(e.message||e);
+  }finally{
+    setExpBusyV5104(false);
+  }
 }
 async function renderBag(){if(!Array.isArray(inventory)||!inventory.length)inventory=await gs('getInventory',currentId);panel.innerHTML=`<h3>🎒 我的道具</h3>${inventory.map(x=>`<div class="itemcard" style="min-height:86px">${x.config?.['圖片']?`<img src="${esc(x.config['圖片'])}" style="width:76px;height:76px;object-fit:contain;float:left;margin-right:10px">`:''}<b>${esc(x.config?.['名稱']||x.itemId)}</b> ×${x.quantity}<br><span class="small">${esc(x.config?.['類型']||'')}｜${esc(x.config?.['說明']||'')}</span><div style="clear:both"></div></div>`).join('')||'<div class="itemcard">背包目前是空的。</div>'}`;}
 async function ensureChallengeHomeMeta(){
-  if(CHALLENGE_HOME_META)return CHALLENGE_HOME_META;
-  if(CHALLENGE_HOME_LOADING)return CHALLENGE_HOME_LOADING;
-  CHALLENGE_HOME_LOADING=gsRaw('getChallengeHomeBundleV5101',currentId)
-    .then(r=>{
-      CHALLENGE_HOME_META=r||{counts:{},status:{}};
-      if(state)state.challengeStatus=CHALLENGE_HOME_META.status||{};
-      if(currentTab==='challenge')renderChallengeHome();
-      return CHALLENGE_HOME_META;
-    })
-    .catch(e=>{
-      console.warn('挑戰首頁資料載入失敗',e);
-      CHALLENGE_HOME_META={counts:{},status:state?.challengeStatus||{}};
-      return CHALLENGE_HOME_META;
-    })
-    .finally(()=>CHALLENGE_HOME_LOADING=null);
-  return CHALLENGE_HOME_LOADING;
+  // V5.10.4：挑戰首頁不再掃描題庫。
+  // 狀態已在登入後背景資料載入；題庫只在點進單一科目時載入。
+  CHALLENGE_HOME_META={status:state?.challengeStatus||{}};
+  return CHALLENGE_HOME_META;
 }
 
 function renderChallengeHome(){
   const subjects=['國語','數學','英文','自然','社會'];
-  const meta=CHALLENGE_HOME_META;
-  if(!meta && !CHALLENGE_HOME_LOADING)ensureChallengeHomeMeta();
-
+  const status=state?.challengeStatus||{};
   panel.innerHTML=`<h3>⚔️ 寵物對戰挑戰</h3>
-    <p class="small">只有題庫中有「啟用中題目」的科目才可以進入對戰。</p>
+    <p class="small">直接選科目即可。題庫只會在進入該科目時載入，不再先檢查五科題庫。</p>
     ${subjects.map(s=>{
-      const st=(meta?.status?.[s])||(state.challengeStatus?.[s])||{correct:0,wrong:0,locked:false};
-      const count=meta?Number(meta.counts?.[s]||0):null;
-      const loading=!meta;
-      const noQuestions=!loading && count===0;
-      const disabled=loading || noQuestions || st.locked;
-
-      let label='進入對戰';
-      if(loading)label='檢查題庫中…';
-      else if(noQuestions)label='暫無題目';
-      else if(st.locked)label='今日已結束';
-
+      const st=status[s]||{correct:0,wrong:0,locked:false};
+      const cached=QUESTION_BANK_LOADED[s] ? (QUESTION_BANK_CACHE[s]||[]).length : null;
+      const disabled=!!st.locked;
+      const label=disabled?'今日已結束':'進入對戰';
       return `<div class="subjectcard ${disabled?'subject-disabled':''}">
         <b>${s}</b>　答對 ${Number(st.correct||0)}
         <span class="lives">${'❤️'.repeat(Math.max(0,3-Number(st.wrong||0)))}${'🖤'.repeat(Math.min(3,Number(st.wrong||0)))}</span>
-        ${loading?'':`<span class="small">｜題目 ${count} 題</span>`}
+        ${cached===null?'':`<span class="small">｜本機題庫 ${cached} 題</span>`}
         <br>
         <button class="btn ${disabled?'gray':'blue'}" ${disabled?'disabled':''}
           onclick="chooseChallenge('${s}')">${label}</button>
@@ -1009,9 +1061,6 @@ function renderChallengeHome(){
     }).join('')}`;
 }
 async function chooseChallenge(subject){
-  const count=Number(CHALLENGE_HOME_META?.counts?.[subject]||0);
-  if(!count)return;
-
   challenge.subject=subject;
   switchMainMode('battle');
   renderBattleMain();
@@ -1022,7 +1071,9 @@ async function chooseChallenge(subject){
     try{await ensureQuestionBank(subject);}finally{hideWaiting();}
   }
   if(!(QUESTION_BANK_CACHE[subject]||[]).length){
-    renderChallengeHome();
+    panel.innerHTML=`<h3>⚔️ ${esc(subject)}對戰</h3>
+      <div class="petcard">這個科目目前沒有啟用中的題目。</div>
+      <button class="btn gray" onclick="renderChallengeHome()">返回</button>`;
     return;
   }
 
