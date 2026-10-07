@@ -1,4 +1,4 @@
-const FRONTEND_BUILD='20261007-0015';
+const FRONTEND_BUILD='20261007-v600-phase1';
 const BUILTIN_LAND_BACKGROUNDS = {
   'LAND001': 'assets/maps/grassland.png',
   'LAND002': 'assets/maps/forest.png',
@@ -276,6 +276,9 @@ let POST_LOGIN_LOADING=null;
 let QUESTION_BANK_READY=false;
 let adminBusyItem=new Set();
 let EXP_USE_BUSY=false;
+let STUDENT_TOKEN_V600='',UPGRADE_MODE_V600='exp',UPGRADE_PET_V600='',UPGRADE_AT_V600=0,UPGRADE_LOADING_V600=null,STONE_BUSY_V600=false;
+let STONE_CATALOG_V600=[],UPGRADE_READY_V600=false;
+let UPGRADE_NOTICE_V600='';
 
 let DRAGGING_PET_ID='';
 
@@ -633,6 +636,7 @@ async function login(){
     if(!r.ok){loginMsg.textContent=r.message||'登入失敗';return;}
 
     currentId=id;
+    STUDENT_TOKEN_V600=String(r.authToken||'');
     hydrateLocalStudentCache();
 
     // 先用極小 state 進首頁，不再等待寵物/土地/信箱/題庫全部讀完。
@@ -803,18 +807,25 @@ function getConfiguredPetSkills(pet){
   if(lv>=30 && cfg.specialName){
     result.push({id:`SPECIAL-${pet.petId}`,name:String(cfg.specialName),damage:Math.max(1,Number(cfg.specialDamage||150)),attribute:attr,kind:'special',unlockLevel:30});
   }
-  return result.sort((a,b)=>a.unlockLevel-b.unlockLevel);
+  return result.sort((a,b)=>a.unlockLevel-b.unlockLevel).map(skill=>{
+    const baseDamage=skill.damage;
+    const bonusDamage=String(state?.skillEnhancements?.[String(pet.petId)]?.[skill.id]||'0');
+    const finalDamage=(BigInt(baseDamage)+BigInt(bonusDamage)).toString();
+    return {...skill,baseDamage,bonusDamage,finalDamage,damage:finalDamage};
+  });
 }
 
 function switchMainMode(mode){
-  mainMode=mode==='battle'?'battle':'home';
+  mainMode=['home','battle','upgrade'].includes(mode)?mode:'home';
   const y=document.getElementById('yard'),b=document.getElementById('battleMain');
   const hb=document.getElementById('homeModeBtn'),bb=document.getElementById('battleModeBtn');
   if(y)y.classList.toggle('hidden',mainMode!=='home');
   if(b)b.classList.toggle('hidden',mainMode!=='battle');
+  document.getElementById('upgradeMain')?.classList.toggle('hidden',mainMode!=='upgrade');
+  document.getElementById('upgradeModeBtn')?.classList.toggle('active',mainMode==='upgrade');
   hb?.classList.toggle('active',mainMode==='home');
   bb?.classList.toggle('active',mainMode==='battle');
-  if(mainMode==='home')renderYard();else renderBattleMain();
+  if(mainMode==='home')renderYard();else if(mainMode==='battle')renderBattleMain();
 }
 function renderBattleMain(){
   const root=document.getElementById('battleMain');if(!root)return;
@@ -949,7 +960,7 @@ function wanderPets(){
 }
 
 function petTalk(p,el){document.querySelectorAll('.bubble').forEach(x=>x.remove());const b=document.createElement('div');b.className='bubble';b.textContent=p.dialogs[Math.floor(Math.random()*p.dialogs.length)];b.style.left=(el.offsetLeft+el.offsetWidth/2)+'px';b.style.top=el.offsetTop+'px';yard.appendChild(b);setTimeout(()=>b.remove(),2400);}
-function switchTab(tab,btn){currentTab=tab;if(tab==='home')switchMainMode('home');if(tab==='challenge'){switchMainMode('battle');}document.querySelectorAll('.tabbtn').forEach(x=>x.classList.remove('active'));btn?.classList.add('active');renderCurrentTab();}
+function switchTab(tab,btn){currentTab=tab;if(tab==='home')switchMainMode('home');if(tab==='challenge')switchMainMode('battle');if(tab==='upgrade')switchMainMode('upgrade');document.querySelectorAll('.tabbtn').forEach(x=>x.classList.remove('active'));btn?.classList.add('active');renderCurrentTab();}
 async function renderCurrentTab(){if(currentTab==='home')renderHome();if(currentTab==='upgrade')await renderUpgrade();if(currentTab==='bag')await renderBag();if(currentTab==='challenge')renderChallengeHome();if(currentTab==='mail')await renderMail();if(currentTab==='shop')await renderShop();}
 function renderHome(){
   const petsHere=state.pets.filter(p=>String(p.landId)===String(state.activeLandId));
@@ -967,13 +978,28 @@ async function changeLand(id){try{const r=await gs('setActiveLandFast',currentId
 async function movePetUI(petId){const sel=document.getElementById('plot-'+petId);if(!sel)return;try{await gs('movePetToLand',currentId,petId,sel.value);const p=state.pets.find(x=>x.petId===petId);if(p)p.landId=sel.value;renderYard();renderHome();}catch(e){alert(e.message||e);}}
 async function applyHomeBackground(){const bg=document.getElementById('homeBg')?.value;if(!bg)return;await useBackgroundFromShop(bg);}
 async function renderUpgrade(){
-  if(!Array.isArray(inventory)||!inventory.length)inventory=await gs('getInventory',currentId);
+  const id=currentId,root=document.getElementById('upgradeMain');
+  if(!root || !state)return;
+  if(!cacheFresh(UPGRADE_AT_V600,300000)){
+    root.innerHTML='<div class="upgrade-empty">載入升級資料中…</div>';
+    try{
+      if(!UPGRADE_LOADING_V600)UPGRADE_LOADING_V600=gs('getUpgradeBundleV600',id,STUDENT_TOKEN_V600).finally(()=>UPGRADE_LOADING_V600=null);
+      const r=await UPGRADE_LOADING_V600;
+      if(currentId!==id)return;
+      applyUpgradeBundleV600(r);
+    }catch(e){if(currentId===id)root.innerHTML=`<div class="upgrade-empty">${esc(e.message||e)}<br><button class="btn" onclick="renderUpgrade()">重新載入</button></div>`;return;}
+  }
+  if(currentId!==id || currentTab!=='upgrade')return;
+  if(!state.pets.length){root.innerHTML='<div class="upgrade-empty">目前沒有可以升級的寵物。</div>';return;}
+  if(!state.pets.some(p=>p.petId===UPGRADE_PET_V600))UPGRADE_PET_V600=state.pets[0].petId;
   const expItems=inventory.filter(x=>x.config?.['類型']==='經驗型');
-  panel.innerHTML=`<h3>⬆️ 寵物升級</h3>
+  panel.innerHTML='<h3>⬆️ 升級系統</h3><p>在左側大型主畫面選擇寵物與升級模式。</p><p class="small">經驗糖果提升等級；同屬性之石永久強化一個已解鎖技能。</p><button class="btn gray" onclick="UPGRADE_AT_V600=0;renderUpgrade()">更新升級資料</button>';
+  root.innerHTML=`<div class="upgrade-heading"><div><span class="small">V6.0 · 升級工坊</span><h2>讓夥伴變得更強</h2></div><div class="upgrade-modes"><button class="btn upgrade-mode-btn ${UPGRADE_MODE_V600==='exp'?'blue':'gray'}" onclick="setUpgradeModeV600('exp')">🍬 經驗糖果</button><button class="btn upgrade-mode-btn ${UPGRADE_MODE_V600==='stone'?'purple':'gray'}" onclick="setUpgradeModeV600('stone')">💎 屬性之石</button></div></div>
+    <div class="upgrade-layout"><div class="upgrade-pet">
     <label>選擇寵物</label>
-    <select id="upPet" class="full">${state.pets.map(p=>`<option value="${p.petId}">${esc(p.name)} Lv.${p.level}</option>`).join('')}</select>
+    <select id="upPet" class="full" ${EXP_USE_BUSY||STONE_BUSY_V600?'disabled':''}>${state.pets.map(p=>`<option value="${esc(p.petId)}" ${p.petId===UPGRADE_PET_V600?'selected':''}>${esc(p.name)} Lv.${p.level}</option>`).join('')}</select>
     <div id="upPetInfo" style="margin-top:8px"></div>
-    <h4>使用經驗道具</h4>
+    </div><div class="upgrade-content"><div id="upgradeNotice">${esc(UPGRADE_NOTICE_V600)}</div>${UPGRADE_MODE_V600==='exp'?`<h3>🍬 經驗糖果</h3>
     ${expItems.length?`
       <div class="batch-exp-toolbar">
         <div class="row">
@@ -995,13 +1021,62 @@ async function renderUpgrade(){
         </div>
         <div style="clear:both"></div>
       </div>`).join('')}
-    `:'<div class="itemcard">目前沒有經驗型道具。</div>'}`;
-  upPet.onchange=renderUpPetInfo;renderUpPetInfo();
+    `:'<div class="itemcard">目前沒有經驗型道具。</div>'}`:'<div id="stoneModeContent"></div>'}</div></div>`;
+  upPet.onchange=()=>{UPGRADE_PET_V600=upPet.value;renderUpPetInfo();if(UPGRADE_MODE_V600==='stone')renderStoneModeV600();};
+  renderUpPetInfo();
+  if(UPGRADE_MODE_V600==='stone')renderStoneModeV600();
+  if(EXP_USE_BUSY)setExpBusyV5104(true);
+}
+
+function applyUpgradeBundleV600(r){
+  if(Array.isArray(r.inventory)){inventory=r.inventory;CLIENT_CACHE.inventory=inventory;CLIENT_CACHE.inventoryAt=Date.now();saveLocal('inventory',inventory);}
+  if(Array.isArray(r.pets))state.pets=r.pets;
+  if(r.skillEnhancements)state.skillEnhancements=r.skillEnhancements;
+  if(Array.isArray(r.petBattleConfigs))PET_BATTLE_CONFIGS=Object.fromEntries(r.petBattleConfigs.map(x=>[String(x.petId),x]));
+  if(Array.isArray(r.stones))STONE_CATALOG_V600=r.stones;
+  if(r.pendingOperation){try{localStorage.setItem(stonePendingKeyV600(),JSON.stringify(r.pendingOperation));}catch(e){UPGRADE_NOTICE_V600='請求尚未完成，瀏覽器無法保存重試資料。';}}
+  UPGRADE_READY_V600=!!r.ready;UPGRADE_AT_V600=Date.now();
+}
+function setUpgradeModeV600(mode){if(EXP_USE_BUSY||STONE_BUSY_V600)return;UPGRADE_MODE_V600=mode==='stone'?'stone':'exp';UPGRADE_NOTICE_V600='';renderUpgrade();}
+function stonePendingKeyV600(){return 'petHouseStonePendingV600:'+currentId;}
+function readStonePendingV600(){try{return JSON.parse(localStorage.getItem(stonePendingKeyV600())||'null');}catch(e){return null;}}
+function renderStoneModeV600(){
+  const root=document.getElementById('stoneModeContent'),pet=state.pets.find(p=>p.petId===upPet.value);if(!root||!pet)return;
+  const attribute=getPetAttribute(pet),skills=getConfiguredPetSkills(pet),pending=readStonePendingV600();
+  const stone=STONE_CATALOG_V600.find(x=>x.attribute===attribute),quantity=stone?inventoryQty(stone.itemId):0;
+  root.innerHTML=`<h3>💎 ${esc(attribute)}之石</h3><p>每顆永久增加 <b>${esc(stone?.increment||'5')}</b> 傷害，每次只強化一個技能。</p><p class="stone-balance">持有 ${quantity} 顆 · 強化可以持續累積</p>
+  ${!UPGRADE_READY_V600?'<div class="itemcard">請老師先執行 setupOrUpgradeV600()。</div>':''}
+  ${pending?`<div class="itemcard"><b>有一筆強化尚未確認完成</b><p>寵物 ${esc(pending.petId)} · 技能 ${esc(pending.skillId)}</p><button class="btn purple stone-action" onclick="useStoneV600()">重試上次強化</button></div>`:''}
+  <div class="upgrade-skills">${skills.map(s=>`<div class="upgrade-skill"><b>${esc(s.name)}</b><span class="skill-kind">${s.kind==='general'?'一般技能':s.kind==='special'?'30 級專屬技能':'屬性技能'}</span><p>基礎 ${s.baseDamage} + 強化 ${esc(s.bonusDamage)} = <strong>${esc(s.finalDamage)}</strong></p><button class="btn purple stone-action" ${!UPGRADE_READY_V600||!stone||quantity<1||pending||STONE_BUSY_V600?'disabled':''} onclick="useStoneV600('${esc(s.id)}')">使用 1 顆${esc(stone?.name||'屬性石')}</button></div>`).join('')}</div>
+  <details class="stone-catalog"><summary>查看 12 種屬性石</summary><div class="stone-catalog-grid">${STONE_CATALOG_V600.map(s=>`<div>${attributeIconHtml(s.attribute,20)} ${esc(s.name)} ×${inventoryQty(s.itemId)}</div>`).join('')}</div></details>`;
+}
+async function useStoneV600(skillId){
+  if(STONE_BUSY_V600||EXP_USE_BUSY)return;
+  const id=currentId,pet=state.pets.find(p=>p.petId===upPet.value);
+  let pending=readStonePendingV600();
+  if(!pending){
+    const stone=STONE_CATALOG_V600.find(s=>s.attribute===getPetAttribute(pet));
+    if(!stone||inventoryQty(stone.itemId)<1||!getConfiguredPetSkills(pet).some(s=>s.id===skillId))return;
+    pending={petId:pet.petId,skillId,itemId:stone.itemId,requestId:crypto.randomUUID()};
+    try{localStorage.setItem(stonePendingKeyV600(),JSON.stringify(pending));}catch(e){alert('無法保存強化請求，請檢查瀏覽器儲存空間後再試。');return;}
+  }
+  STONE_BUSY_V600=true;
+  document.querySelectorAll('.stone-action,.upgrade-mode-btn,#upPet').forEach(el=>el.disabled=true);
+  try{
+    const r=await gs('useAttributeStoneV600',id,pending.petId,pending.skillId,pending.itemId,pending.requestId,STUDENT_TOKEN_V600);
+    if(currentId!==id)return;
+    if(r.ok===false){if(!r.retryable)localStorage.removeItem(stonePendingKeyV600());throw new Error(r.message||'強化失敗');}
+    localStorage.removeItem(stonePendingKeyV600());applyUpgradeBundleV600(r);
+    const stone=STONE_CATALOG_V600.find(s=>s.itemId===pending.itemId);
+    UPGRADE_NOTICE_V600=`✅ 技能已永久強化 +${stone?.increment||'5'} 傷害`;
+    await renderUpgrade();
+  }catch(e){if(currentId===id){alert(e.message||e);await renderUpgrade();}}
+  finally{STONE_BUSY_V600=false;if(currentId===id && currentTab==='upgrade')renderUpgrade();}
 }
 
 function setExpBusyV5104(on,label='處理中...'){
   EXP_USE_BUSY=!!on;
-  document.querySelectorAll('.exp-action,.exp-batch-check,[id^="qty-"]').forEach(el=>{
+  document.querySelectorAll('.exp-action,.exp-batch-check,[id^="qty-"],.upgrade-mode-btn,#upPet').forEach(el=>{
     el.disabled=!!on;
   });
   let note=document.getElementById('expBusyNote');
@@ -1035,14 +1110,14 @@ async function useExpBatch(btn){
     const p=state.pets.find(x=>x.petId===petId);
     if(p){p.level=Number(r.level||p.level);p.exp=Number(r.exp??p.exp);p.stage=Number(r.stage||p.stage);p.expNeed=Number(r.expNeed??p.expNeed);p.image=getPetImage(p.petId,p.stage)||r.image||p.image;}
     await renderUpgrade();renderYard();
-    const note=document.createElement('div');note.className='success';note.textContent=`✅ 批量使用完成，共 +${r.gained} EXP`;panel.prepend(note);setTimeout(()=>note.remove(),1800);
+    const note=document.createElement('div');note.className='success';note.textContent=`✅ 批量使用完成，共 +${r.gained} EXP`;(document.getElementById('upgradeNotice')||panel).prepend(note);setTimeout(()=>note.remove(),1800);
   }catch(e){
     alert(e.message||e);
   }finally{
     setExpBusyV5104(false);
   }
 }
-function renderUpPetInfo(){const p=state.pets.find(x=>x.petId===upPet.value);if(p)upPetInfo.innerHTML=petCardHtml(p);}
+function renderUpPetInfo(){const p=state.pets.find(x=>x.petId===upPet.value);if(p){const src=getPetImage(p.petId,p.stage)||p.image||'';upPetInfo.innerHTML=`<div class="upgrade-pet-portrait">${src?`<img src="${esc(src)}" alt="${esc(p.name)}">`:'🐾'}</div>${petCardHtml(p)}<p>${attributeIconHtml(getPetAttribute(p),24)} ${esc(getPetAttribute(p))}屬性</p>`;}}
 async function useExp(itemId,btn){
   if(EXP_USE_BUSY)return;
   const petId=upPet.value;
@@ -1054,7 +1129,7 @@ async function useExp(itemId,btn){
     const p=state.pets.find(x=>x.petId===petId);
     if(p){p.level=Number(r.level||p.level);p.exp=Number(r.exp??p.exp);p.stage=Number(r.stage||p.stage);p.expNeed=Number(r.expNeed??p.expNeed);p.image=getPetImage(p.petId,p.stage)||r.image||p.image;}
     await renderUpgrade();renderYard();
-    const note=document.createElement('div');note.className='success';note.textContent=`✅ +${r.gained} EXP`;panel.prepend(note);setTimeout(()=>note.remove(),1400);
+    const note=document.createElement('div');note.className='success';note.textContent=`✅ +${r.gained} EXP`;(document.getElementById('upgradeNotice')||panel).prepend(note);setTimeout(()=>note.remove(),1400);
   }catch(e){
     alert(e.message||e);
   }finally{
@@ -1629,6 +1704,8 @@ async function useBackgroundFromShop(id){
   }
 }
 function logout(){
+  STUDENT_TOKEN_V600='';UPGRADE_AT_V600=0;UPGRADE_PET_V600='';UPGRADE_LOADING_V600=null;STONE_CATALOG_V600=[];UPGRADE_READY_V600=false;
+  UPGRADE_NOTICE_V600='';UPGRADE_MODE_V600='exp';
   currentId='';state=null;mainMode='home';inventory=[];mailbox=[];shop=null;mailboxLoaded=false;mailboxAt=0;adminPassword='';sessionStorage.removeItem('petHouseAdminPassword');
   if(wanderTimer)clearInterval(wanderTimer);
   if(backgroundMailTimer)clearInterval(backgroundMailTimer);
