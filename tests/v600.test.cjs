@@ -138,6 +138,8 @@ for(const [action] of extractAPI(previousBackend))assert.ok(api.has(action),'pre
 for(const match of frontend.matchAll(/\bgs(?:Raw)?\('([^']+)'/g))assert.equal(typeof context[api.get(match[1])],'function',match[1]);
 const previousContext=vm.createContext({});vm.runInContext(previousBackend,previousContext);
 assert.equal(normalizeLines(context.randomGift_.toString()),normalizeLines(previousContext.randomGift_.toString()),'mailbox drop probabilities unchanged');
+// 共用記憶體 Sheets 測試環境，第二階段測試不碰線上資料。
+module.exports={context,call,tables,cache,writes,makeSheet,frontend,backend,setFault:fn=>fault=fn,isLocked:()=>locked};
 async function testUpgradeDOM() {
   const elements=new Map();
   const element=()=>({innerHTML:'',textContent:'',disabled:false,classList:{add(){},remove(){},toggle(){}},prepend(){},remove(){}});

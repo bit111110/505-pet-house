@@ -438,41 +438,61 @@ function getMailboxFresh(studentId){
  * 只回傳必要資料，不再為了領一封信重讀整個信箱。
  */
 function claimMailFast(studentId,mailId){
-  const sh=SpreadsheetApp.getActive().getSheetByName(SHEETS.MAILBOX);
-  const hm=headerMap_(sh);
-  const vals=sh.getDataRange().getValues();
-  const id=String(studentId).trim();
-
-  for(let i=1;i<vals.length;i++){
-    if(String(vals[i][hm['信件ID']-1])===String(mailId) && String(vals[i][hm['學號']-1]).trim()===id){
-      if(vals[i][hm['是否領取']-1]===true || String(vals[i][hm['是否領取']-1]).toUpperCase()==='TRUE') {
-        // 前端可能已先樂觀更新，重複呼叫時直接回目前狀態。
-        return {ok:true,inventory:getInventory(id),unreadMail:getUnreadMailCount_(id)};
-      }
-      const type=String(vals[i][hm['附件類型']-1]||'');
-      const aid=String(vals[i][hm['附件ID']-1]||'');
-      const qty=Number(vals[i][hm['附件數量']-1]||0);
-      if(type==='道具' && aid && qty>0) addItem_(id,aid,qty);
-      sh.getRange(i+1,hm['是否領取']).setValue(true);
-      return {ok:true,inventory:getInventory(id),unreadMail:getUnreadMailCount_(id)};
-    }
-  }
-  throw new Error('找不到信件');
+  const id=String(studentId).trim(),lock=LockService.getScriptLock();lock.waitLock(12000);
+  try{
+    const sh=SpreadsheetApp.getActive().getSheetByName(SHEETS.MAILBOX);
+    const rows=readRowsWithPositionV600_(sh);
+    const mail=rows.find(r=>String(r['信件ID'])===String(mailId) && String(r['學號']).trim()===id);
+    if(!mail)throw new Error('找不到信件');
+    claimMailLockedV600_(id,sh,mail,rows);
+  }finally{lock.releaseLock();}
+  return {ok:true,inventory:getInventory(id),unreadMail:getUnreadMailCount_(id)};
 }
 
-
-function claimMail(studentId,mailId){
-  const sh=SpreadsheetApp.getActive().getSheetByName(SHEETS.MAILBOX), hm=headerMap_(sh), vals=sh.getDataRange().getValues(), id=String(studentId).trim();
-  for(let i=1;i<vals.length;i++){
-    if(String(vals[i][hm['信件ID']-1])===String(mailId) && String(vals[i][hm['學號']-1]).trim()===id){
-      if(vals[i][hm['是否領取']-1]===true || String(vals[i][hm['是否領取']-1]).toUpperCase()==='TRUE') throw new Error('已領取');
-      const type=String(vals[i][hm['附件類型']-1]||''), aid=String(vals[i][hm['附件ID']-1]||''), qty=Number(vals[i][hm['附件數量']-1]||0);
-      if(type==='道具' && aid && qty>0) addItem_(id,aid,qty);
-      sh.getRange(i+1,hm['是否領取']).setValue(true);
-      return {ok:true,inventory:getInventory(id),unreadMail:getUnreadMailCount_(id)};
+// 保留舊 API；同樣使用信件 ID 去重與可恢復的領取交易。
+function claimMail(studentId,mailId){return claimMailFast(studentId,mailId);}
+function mailClaimedV600_(mail){return mail['是否領取']===true || String(mail['是否領取']).toUpperCase()==='TRUE';}
+function assertNoPendingStoneMailV600_(studentId,itemId,exceptMailId,rows){
+  const mails=rows||readObjects_(SpreadsheetApp.getActive().getSheetByName(SHEETS.MAILBOX));
+  if(mails.some(m=>String(m['學號']).trim()===studentId && String(m['附件ID'])===itemId && String(m['信件ID'])!==String(exceptMailId||'') && !mailClaimedV600_(m) && m['領取交易']))throw new Error('請先重新領取上一封尚未完成的信件');
+}
+/** 呼叫端已持有 ScriptLock；只更新道具數量與該封信，不整張寫回。 */
+function claimMailLockedV600_(id,sh,mail,mails,batch){
+  if(mailClaimedV600_(mail))return;
+  const mh=headerMap_(sh),iid=String(mail['附件ID']||''),qty=Number(mail['附件數量']||0);
+  if(String(mail['附件類型'])==='道具' && iid && qty>0){
+    if(!mh['領取交易'])throw new Error('請先執行 setupOrUpgradeV600() 新增信箱領取交易欄位');
+    if(!Number.isSafeInteger(qty))throw new Error('信件附件數量無效');
+    if(attributeStoneV600_(iid)){
+      const log=SpreadsheetApp.getActive().getSheetByName(SHEETS.SKILL_ENHANCEMENTS);
+      if((batch?.skillOperations||readObjects_(log)).some(r=>String(r['學號']).trim()===id && r['狀態']==='PENDING'))throw new Error('請先重試上一筆尚未完成的強化');
     }
+    assertNoPendingStoneMailV600_(id,iid,mail['信件ID'],mails);
+    const items=SpreadsheetApp.getActive().getSheetByName(SHEETS.STUDENT_ITEMS),ih=headerMap_(items);
+    let transaction;
+    if(mail['領取交易']){
+      try{transaction=JSON.parse(String(mail['領取交易']));}catch(e){throw new Error('領取交易資料無效，請老師確認');}
+    }else{
+      const row=(batch?.itemRows||readRowsWithPositionV600_(items)).find(r=>String(r['學號']).trim()===id && String(r['道具ID'])===iid);
+      const before=Number(row?.['數量']||0),after=before+qty;
+      if(!Number.isSafeInteger(before)||before<0||!Number.isSafeInteger(after))throw new Error('道具數量無效或超出儲存範圍');
+      const itemRow=row?row._row:items.getLastRow()+1;
+      if(!row){appendObject_(items,{'學號':id,'道具ID':iid,'數量':0});SpreadsheetApp.flush();if(batch)batch.itemRows.push({'學號':id,'道具ID':iid,'數量':0,_row:itemRow});}
+      transaction={itemId:iid,quantity:qty,row:itemRow,before,after};
+      mail['領取交易']=JSON.stringify(transaction);
+      sh.getRange(mail._row,mh['領取交易']).setValue(mail['領取交易']);SpreadsheetApp.flush();
+    }
+    const t=transaction;
+    if(t.itemId!==iid||t.quantity!==qty||!Number.isSafeInteger(t.row)||t.row<2||!Number.isSafeInteger(t.before)||t.before<0||!Number.isSafeInteger(t.after)||t.after!==t.before+qty)throw new Error('信件交易資料已變動，請老師確認');
+    const values=items.getRange(t.row,1,1,items.getLastColumn()).getValues()[0];
+    if(String(values[ih['學號']-1]).trim()!==id||String(values[ih['道具ID']-1])!==iid)throw new Error('道具列已變動，請老師確認領取交易');
+    const current=Number(values[ih['數量']-1]);
+    if(current===t.before){items.getRange(t.row,ih['數量']).setValue(t.after);SpreadsheetApp.flush();}
+    else if(current!==t.after)throw new Error('道具數量已變動，請老師確認領取交易');
+    if(batch){const row=batch.itemRows.find(r=>r._row===t.row);if(row)row['數量']=t.after;}
   }
-  throw new Error('找不到信件');
+  sh.getRange(mail._row,mh['是否領取']).setValue(true);SpreadsheetApp.flush();
+  mail['是否領取']=true;
 }
 
 function getUnreadMailCount_(studentId){ return getUnreadMailCountFast_(studentId); }
@@ -1051,7 +1071,21 @@ function getRuntimeBundleFast(studentId){
 }
 
 /** 整點禮物改成一次 setValues，不再每封 appendRow。 */
+// 每封整點寵物禮物抽中屬性石的機率（0～1）；數量累積機率 80/90/96/99/100%。
+const HOURLY_STONE_DROP_RATE_V600 = 0.50;
+function hourlyPetGiftV600_(petId,attributes,available){
+  const stone=ATTRIBUTE_STONES_V600.find(s=>s.attribute===attributes[String(petId)]);
+  if(stone && available.has(stone.itemId) && Math.random()<HOURLY_STONE_DROP_RATE_V600){
+    const r=Math.random(),qty=r<0.80?1:r<0.90?2:r<0.96?3:r<0.99?4:5;
+    return {itemId:stone.itemId,qty,title:stone.name,content:'寵物帶回了 '+qty+' 顆'+stone.name+'！可以用來強化技能傷害。'};
+  }
+  return randomGift_();
+}
 function generateHourlyGiftsFast_(studentId){
+  const lock=LockService.getScriptLock();lock.waitLock(12000);
+  try{return generateHourlyGiftsLockedV600_(studentId);}finally{lock.releaseLock();}
+}
+function generateHourlyGiftsLockedV600_(studentId){
   const id=String(studentId||'').trim();
   const f=findStudentRow_(id);if(!f)return;
   const pets=readObjects_(SpreadsheetApp.getActive().getSheetByName(SHEETS.PETS))
@@ -1066,16 +1100,26 @@ function generateHourlyGiftsFast_(studentId){
   }
 
   let cursor=new Date(last);cursor.setMinutes(0,0,0);cursor=new Date(cursor.getTime()+3600000);
+  if(cursor>thisHour)return;
+  const mailboxSheet=SpreadsheetApp.getActive().getSheetByName(SHEETS.MAILBOX);
+  // 固定學號＋整點 ID：發信完成、最後整點欄位更新失敗時，重試不重複發放。
+  const mailHeaders=headerMap_(mailboxSheet);
+  const existing=new Set(mailboxSheet.getLastRow()<2?[]:mailboxSheet.getRange(2,mailHeaders['信件ID'],mailboxSheet.getLastRow()-1,1).getValues().map(r=>String(r[0])));
+  const attributes={};getPetBattleConfigFast().forEach(p=>attributes[p.petId]=String(p.attribute).trim());
+  cachedObjects_(SHEETS.PET_CONFIG,300).forEach(p=>{const pid=String(p['寵物ID']);if(!attributes[pid])attributes[pid]=String(p['屬性']||'').trim();});
+  const available=new Set(cachedObjects_(SHEETS.ITEM_CONFIG,300).filter(x=>String(x['類型'])==='屬性石').map(x=>String(x['道具ID'])));
   const mails=[];let made=0;
   while(cursor<=thisHour && made<48){
-    const pet=pets[made%pets.length],gift=randomGift_();
+    const pet=pets[made%pets.length],mailId='MAIL-H600-'+id+'-'+cursor.getTime();
+    if(existing.has(mailId)){made++;cursor=new Date(cursor.getTime()+3600000);continue;}
+    const gift=hourlyPetGiftV600_(pet['寵物ID'],attributes,available);
     mails.push({
-      '信件ID':'MAIL-'+Utilities.getUuid(),
+      '信件ID':mailId,
       '學號':id,
       '時間':new Date(cursor),
       '寄件者':String(pet['寵物ID']),
-      '標題':'整點小禮物',
-      '內容':'寵物在整點時替你帶回了一份禮物！',
+      '標題':gift.title||'整點小禮物',
+      '內容':gift.content||'寵物在整點時替你帶回了一份禮物！',
       '附件類型':'道具',
       '附件ID':gift.itemId,
       '附件數量':gift.qty,
@@ -1323,26 +1367,18 @@ function setPlotBackgroundFast(studentId,slotId,bgId){
 function movePetToLandV55(studentId,petId,slotId){const id=String(studentId).trim();const own=readObjects_(SpreadsheetApp.getActive().getSheetByName(SHEETS.STUDENT_PLOTS)).some(x=>String(x['學號']).trim()===id&&String(x['土地格ID'])===String(slotId));if(!own)throw new Error('尚未擁有這塊土地');const sh=SpreadsheetApp.getActive().getSheetByName(SHEETS.PETS),hm=headerMap_(sh),vals=sh.getDataRange().getValues();for(let i=1;i<vals.length;i++)if(String(vals[i][hm['學號']-1]).trim()===id&&String(vals[i][hm['寵物ID']-1])===String(petId)){sh.getRange(i+1,hm['土地ID']).setValue(slotId);return true;}throw new Error('找不到寵物');}
 
 function claimAllMailFast(studentId){
-  const id=String(studentId).trim();
-  const sh=SpreadsheetApp.getActive().getSheetByName(SHEETS.MAILBOX);
-  const hm=headerMapFast_(sh);
-  if(sh.getLastRow()<2)return {ok:true,mailbox:[],inventory:getInventory(id),unreadMail:0};
-
-  const vals=sh.getRange(2,1,sh.getLastRow()-1,sh.getLastColumn()).getValues();
-  const gifts={},rowA1=[];
-  for(let i=0;i<vals.length;i++){
-    if(String(vals[i][hm['學號']-1]||'').trim()!==id)continue;
-    const claimed=vals[i][hm['是否領取']-1]===true||String(vals[i][hm['是否領取']-1]).toUpperCase()==='TRUE';
-    if(claimed)continue;
-    const aid=String(vals[i][hm['附件ID']-1]||'');
-    const qty=Number(vals[i][hm['附件數量']-1]||0);
-    const type=String(vals[i][hm['附件類型']-1]||'');
-    if(type==='道具'&&aid&&qty>0)gifts[aid]=(gifts[aid]||0)+qty;
-    rowA1.push(sh.getRange(i+2,hm['是否領取']).getA1Notation());
-  }
-  addItemsBatch_(id,gifts);
-  if(rowA1.length)sh.getRangeList(rowA1).setValue(true);
-  return {ok:true,mailbox:getMailboxFast_(id),inventory:getInventory(id),unreadMail:0};
+  const id=String(studentId).trim(),lock=LockService.getScriptLock();lock.waitLock(12000);
+  try{
+    const sh=SpreadsheetApp.getActive().getSheetByName(SHEETS.MAILBOX),rows=readRowsWithPositionV600_(sh);
+    // 先恢復未完成交易，再領其他信件；單封與全部領取共用相同去重流程。
+    const targets=rows.filter(r=>String(r['學號']).trim()===id && !mailClaimedV600_(r));
+    targets.sort((a,b)=>Number(Boolean(b['領取交易']))-Number(Boolean(a['領取交易'])));
+    if(targets.length){
+      const ss=SpreadsheetApp.getActive(),batch={itemRows:readRowsWithPositionV600_(ss.getSheetByName(SHEETS.STUDENT_ITEMS)),skillOperations:readObjects_(ss.getSheetByName(SHEETS.SKILL_ENHANCEMENTS))};
+      targets.forEach(mail=>claimMailLockedV600_(id,sh,mail,rows,batch));
+    }
+  }finally{lock.releaseLock();}
+  return {ok:true,mailbox:getMailboxFast_(id),inventory:getInventory(id),unreadMail:getUnreadMailCount_(id)};
 }
 
 function getAdminPassword_(){return String(PropertiesService.getScriptProperties().getProperty('ADMIN_PASSWORD')||'');}
@@ -2002,7 +2038,7 @@ function adminGrantItemsBatchV599(password,studentIds,itemId,quantity,reason){
       vals[i][hm['數量']-1]=Number(vals[i][hm['數量']-1]||0)+qty;
     }
   });
-  if(vals.length)sh.getRange(2,1,vals.length,lastCol).setValues(vals);
+  ids.forEach(sid=>{if(found.has(sid)){const i=found.get(sid);sh.getRange(i+2,hm['數量']).setValue(vals[i][hm['數量']-1]);}});
 
   const appends=[];
   ids.forEach(sid=>{
@@ -2232,13 +2268,14 @@ function setupOrUpgradeV600(){
       if(existing && (String(existing['類型'])!=='屬性石'||Number(existing['效果值'])!==Number(stone.increment)))throw new Error('道具 ID 已被其他設定使用：'+stone.itemId);
     });
     ensureSheet_(SHEETS.SKILL_ENHANCEMENTS,SKILL_ENHANCEMENT_HEADERS_V600);
+    ensureSheet_(SHEETS.MAILBOX,['信件ID','學號','時間','寄件者','標題','內容','附件類型','附件ID','附件數量','是否領取','領取交易']);
     const missing=ATTRIBUTE_STONES_V600.filter(s=>!rows.some(x=>String(x['道具ID'])===s.itemId));
     appendObjectsBatch_(items,missing.map(s=>({'道具ID':s.itemId,'名稱':s.name,'類型':'屬性石','效果值':Number(s.increment),'圖片':'','說明':'同屬性寵物的一個已解鎖技能永久增加 '+s.increment+' 傷害。','是否開放':true})));
     const types=[...new Set(rows.map(x=>String(x['類型']||'')).filter(Boolean).concat(['經驗型','寶物型','屬性石']))];
     const hm=headerMap_(items);
     items.getRange(2,hm['類型'],Math.max(1,items.getMaxRows()-1),1).setDataValidation(SpreadsheetApp.newDataValidation().requireValueInList(types,true).setAllowInvalid(false).build());
     clearAllGameConfigCacheV598_();
-    return 'V6.0 第一階段完成：新增缺少的屬性石設定與技能強化紀錄表；未發放道具或重設學生資料';
+    return 'V6.0 升級完成：補齊屬性石設定、技能強化紀錄及信箱領取交易欄；未發放道具或重設學生資料';
   }finally{lock.releaseLock();}
 }
 function getSkillEnhancementsV600_(studentId){
@@ -2306,6 +2343,7 @@ function useAttributeStoneV600(studentId,petId,skillId,itemId,requestId,token){
       try{
         stone=attributeStoneV600_(iid);if(!stone)throw new Error('這不是屬性石');
         validateStoneSkillV600_(id,pid,sid,stone);
+        assertNoPendingStoneMailV600_(id,iid);
         if(rows.some(r=>String(r['學號']).trim()===id && r['狀態']==='PENDING'))throw new Error('請先重試上一筆尚未完成的強化');
         const vals=items.getDataRange().getValues();itemRow=vals.findIndex((r,i)=>i>0 && String(r[ih['學號']-1]).trim()===id && String(r[ih['道具ID']-1])===iid)+1;
         have=itemRow>1?Number(vals[itemRow-1][ih['數量']-1]):0;
@@ -2324,7 +2362,7 @@ function useAttributeStoneV600(studentId,petId,skillId,itemId,requestId,token){
     return {...getUpgradeBundleV600(id,token),requestId:rid,replayed:false};
   }finally{lock.releaseLock();}
 }
-// 預留後端取得入口；目前只由老師既有發道具 API 呼叫，不接入信箱掉落。
+// 老師既有發道具入口；與信箱領取、技能強化共用 ScriptLock。
 function grantAttributeStonesV600_(studentIds,itemId,quantity,reason){
   const ids=[...new Set(studentIds.map(x=>String(x).trim()).filter(Boolean))],iid=String(itemId),qty=Number(quantity||1);
   if(!attributeStoneV600_(iid)||!ids.length||!Number.isSafeInteger(qty)||qty<1)throw new Error('屬性石發放資料無效');
@@ -2334,6 +2372,7 @@ function grantAttributeStonesV600_(studentIds,itemId,quantity,reason){
     const operations=log?readObjects_(log):[];
     ids.forEach(id=>{
       if(!getStudent_(id))throw new Error('找不到學生：'+id);
+      assertNoPendingStoneMailV600_(id,iid);
       if(operations.some(r=>String(r['學號']).trim()===id && r['狀態']==='PENDING'))throw new Error('學生有尚未完成的強化，請先重試完成');
     });
     const quantities={};

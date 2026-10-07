@@ -1489,39 +1489,41 @@ async function renderMail(){
 }
 function renderMailFromCache(){
   const unclaimed=mailbox.filter(m=>!(m['是否領取']===true||String(m['是否領取']).toUpperCase()==='TRUE')).length;
-  panel.innerHTML=`<h3>📬 信箱</h3><div class="mail-actions"><button class="btn blue" ${unclaimed?'':'disabled'} onclick="claimAllMailUI()">📦 一鍵收取全部（${unclaimed}）</button><button class="btn gray" onclick="refreshMailboxInBackground(true)">更新信箱</button></div>${mailbox.map(m=>`<div class="mailcard"><b>${esc(m['標題'])}</b><br><span class="small">寄件者：${esc(m['寄件者'])}</span><p>${esc(m['內容'])}</p>${m['附件ID']?`🎁 ${esc(m['附件名稱'])} ×${m['附件數量']}<br>`:''}<button class="btn ${m['是否領取']===true||String(m['是否領取']).toUpperCase()==='TRUE'?'gray':''}" ${(m['是否領取']===true||String(m['是否領取']).toUpperCase()==='TRUE')?'disabled':''} onclick="claimMailUI('${m['信件ID']}')">${(m['是否領取']===true||String(m['是否領取']).toUpperCase()==='TRUE')?'已領取':'領取附件'}</button></div>`).join('')||'<div class="mailcard">目前沒有信件。</div>'}`;
+  panel.innerHTML=`<h3>📬 信箱</h3><div class="mail-actions"><button class="btn blue" ${unclaimed&&!MAIL_CLAIM_BUSY_V600?'':'disabled'} onclick="claimAllMailUI()">📦 一鍵收取全部（${unclaimed}）</button><button class="btn gray" ${MAIL_CLAIM_BUSY_V600?'disabled':''} onclick="refreshMailboxInBackground(true)">更新信箱</button></div>${mailbox.map(m=>`<div class="mailcard"><b>${esc(m['標題'])}</b><br><span class="small">寄件者：${esc(m['寄件者'])}</span><p>${esc(m['內容'])}</p>${m['附件ID']?`🎁 ${esc(m['附件名稱'])} ×${m['附件數量']}<br>`:''}<button class="btn ${m['是否領取']===true||String(m['是否領取']).toUpperCase()==='TRUE'?'gray':''}" ${(MAIL_CLAIM_BUSY_V600||m['是否領取']===true||String(m['是否領取']).toUpperCase()==='TRUE')?'disabled':''} onclick="claimMailUI('${m['信件ID']}')">${(m['是否領取']===true||String(m['是否領取']).toUpperCase()==='TRUE')?'已領取':'領取附件'}</button></div>`).join('')||'<div class="mailcard">目前沒有信件。</div>'}`;
 }
-async function claimAllMailUI(){const targets=mailbox.filter(m=>!(m['是否領取']===true||String(m['是否領取']).toUpperCase()==='TRUE'));if(!targets.length)return;targets.forEach(m=>m['是否領取']=true);if(state)state.unreadMail=0;mailBadge.classList.add('hidden');renderMailFromCache();saveLocal('mailbox',mailbox);try{const r=await gs('claimAllMailFast',currentId);if(Array.isArray(r?.mailbox))mailbox=r.mailbox;if(Array.isArray(r?.inventory)){inventory=r.inventory;saveLocal('inventory',inventory);}saveLocal('mailbox',mailbox);renderMailFromCache();}catch(e){alert(e.message||e);await refreshMailboxInBackground(true);}}
+let MAIL_CLAIM_BUSY_V600=false;
+async function claimAllMailUI(){
+  if(!mailbox.some(m=>!(m['是否領取']===true||String(m['是否領取']).toUpperCase()==='TRUE')))return;
+  return claimMailboxUIV600_('claimAllMailFast');
+}
 async function claimMailUI(id){
   const m=mailbox.find(x=>String(x['信件ID'])===String(id));
-  if(!m)return;
-  const wasClaimed=m['是否領取'];
-  const oldUnread=Number(state?.unreadMail||0);
-
-  // 先更新畫面，學生不需要等後端。
-  m['是否領取']=true;
-  if(state)state.unreadMail=Math.max(0,oldUnread-1);
-  mailBadge.textContent=state?.unreadMail||0;
-  mailBadge.classList.toggle('hidden',!(state?.unreadMail));
+  if(!m||m['是否領取']===true||String(m['是否領取']).toUpperCase()==='TRUE')return;
+  return claimMailboxUIV600_('claimMailFast',id);
+}
+async function claimMailboxUIV600_(action,mailId){
+  if(MAIL_CLAIM_BUSY_V600)return;
+  MAIL_CLAIM_BUSY_V600=true;
+  const studentId=currentId;
   renderMailFromCache();
-  saveLocal('mailbox',mailbox);
-
   try{
-    const r=await gs('claimMailFast',currentId,id);
+    const r=await gs(action,...(mailId?[studentId,mailId]:[studentId]));
+    if(currentId!==studentId)return;
+    if(Array.isArray(r?.mailbox))mailbox=r.mailbox;
+    else mailbox.forEach(m=>{if(String(m['信件ID'])===String(mailId))m['是否領取']=true;});
     if(Array.isArray(r?.inventory)){inventory=r.inventory;CLIENT_CACHE.inventory=inventory;CLIENT_CACHE.inventoryAt=Date.now();saveLocal('inventory',inventory);}
-    if(state){
-      state.unreadMail=Number(r?.unreadMail??state.unreadMail);
-      mailBadge.textContent=state.unreadMail;
-      mailBadge.classList.toggle('hidden',!state.unreadMail);
-    }
+    if(state)state.unreadMail=Number(r?.unreadMail??state.unreadMail);
+    mailBadge.textContent=state?.unreadMail||0;
+    mailBadge.classList.toggle('hidden',!state?.unreadMail);
+    saveLocal('mailbox',mailbox);
   }catch(e){
-    // 後端失敗才回復原狀。
-    m['是否領取']=wasClaimed;
-    if(state)state.unreadMail=oldUnread;
-    mailBadge.textContent=oldUnread;
-    mailBadge.classList.toggle('hidden',!oldUnread);
-    renderMailFromCache();
+    if(currentId!==studentId)return;
     alert(e.message||e);
+    // 逾時可能已入帳：重新讀取實際信箱，下次以同一信件 ID 恢復交易。
+    await refreshMailboxInBackground(true);
+  }finally{
+    MAIL_CLAIM_BUSY_V600=false;
+    if(currentId===studentId && currentTab==='mail')renderMailFromCache();
   }
 }
 let purchaseBusy=false,purchaseDotsTimer=null;
