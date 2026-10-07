@@ -68,3 +68,25 @@
 }
 .battle-pet-name .attribute-sprite{margin-right:4px}
 .skill-btn .attribute-sprite{margin-right:3px}
+
+/* V6.0 第三階段：舞台與答題同一個主畫面，正常文件流，不使用題目 modal。 */
+.student-navigation{grid-column:1/-1;margin:0;background:#fff8e9;border-radius:14px;padding:8px;display:flex;gap:7px;flex-wrap:wrap}
+#studentLayout.battle-mode{grid-template-columns:minmax(0,1fr)}
+.battle-mode #studentSidebar{display:none}
+.battle-mode .main-stage-wrap{min-width:0}
+.battle-mode .battle-main{height:auto;min-height:calc(100dvh - 150px);background:#fffaf1;overflow:visible}
+.battle-stage-main{position:relative;height:clamp(340px,48vh,560px);overflow:hidden;border-radius:18px 18px 0 0;background:linear-gradient(#cfe8ff 0 55%,#ead9b8 55% 100%)}
+.battle-stage-main.battle-intro{height:auto;min-height:210px;display:flex;align-items:center;justify-content:center;text-align:center;padding:24px}.battle-intro-icon{font-size:64px}
+.battle-controls{padding:22px;min-width:0}.battle-controls-heading{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}.battle-controls-heading h2{margin:0;font-size:24px}
+.battle-result{margin:14px 0;padding:12px 16px;border-radius:12px;background:#f1ebde;min-height:48px;overflow-wrap:anywhere}
+.battle-operation-grid{display:grid;grid-template-columns:minmax(230px,.8fr) minmax(0,1.2fr);gap:22px;align-items:start}.battle-skills h3{margin:0 0 10px}
+.battle-controls .skill-grid{grid-template-columns:repeat(2,minmax(0,1fr));margin:0;gap:9px}.battle-controls .skill-btn{min-height:78px;white-space:normal;overflow-wrap:anywhere}.battle-controls .skill-btn span{font-size:14px}.battle-controls .skill-btn.selected{outline:3px solid #d4a137;outline-offset:2px}
+.battle-question-area{background:white;border:2px solid #e2d3b9;border-radius:16px;padding:20px;min-height:260px;min-width:0}.battle-question .row{justify-content:space-between;margin-bottom:16px}.battle-question .qtext{line-height:1.6;overflow-wrap:anywhere}.battle-question-empty{padding:70px 12px;text-align:center;color:#796d60}
+.battle-question .option{min-height:52px;height:auto;white-space:normal;overflow-wrap:anywhere;line-height:1.6}.battle-controls .question-image{max-height:320px}.battle-exit-actions{border-top:1px solid #e4d5bf;padding-top:16px;margin-top:22px}.battle-exit-actions .btn{min-height:44px}
+.battle-mode .battle-monster-sprite{height:190px;display:flex;align-items:flex-end;justify-content:center}
+@media(max-width:900px){.battle-operation-grid{grid-template-columns:1fr}.battle-controls{padding:18px}.battle-controls .skill-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.battle-stage-main{height:clamp(300px,42vh,440px)}.battle-mode .battle-monster-sprite{height:145px}.battle-question-area{min-height:220px}}
+@media(max-width:650px){.student-navigation{gap:5px;padding:6px}.student-navigation .tabbtn{padding:9px 10px;font-size:14px}.battle-controls{padding:12px}.battle-controls-heading h2{font-size:19px}.battle-stage-main{height:330px}.battle-status{left:8px;right:8px;top:10px;padding:8px;font-size:13px;flex-wrap:wrap}.battle-status .lives{font-size:16px;letter-spacing:2px}.battle-pet-side,.battle-monster-side{width:44%;bottom:8%}.battle-pet-side{left:3%}.battle-monster-side{right:3%}.battle-pet-name,.battle-monster-name{font-size:13px;overflow-wrap:anywhere}.battle-pet-sprite img,.battle-monster-sprite img{max-width:100%;max-height:135px}.battle-controls .skill-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.battle-question-area{padding:12px}.battle-question .qtext{font-size:19px}.battle-question .row{font-size:14px}.battle-exit-actions .btn{flex:1 1 45%}}
+@media(prefers-reduced-motion:reduce){.attack-lunge,.hit-shake,.battle-damage-float{animation:none!important}}
+
+.battle-mode .battle-pet-sprite{font-size:120px;line-height:1}
+@media(max-width:900px){.battle-controls .skill-grid{max-height:280px;overflow:auto;padding:4px;overscroll-behavior:contain}.battle-mode .battle-pet-sprite{font-size:95px}}

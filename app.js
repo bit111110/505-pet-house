@@ -1,4 +1,4 @@
-const FRONTEND_BUILD='20261007-v600-phase1';
+const FRONTEND_BUILD='20261008-v600-phase3';
 const BUILTIN_LAND_BACKGROUNDS = {
   'LAND001': 'assets/maps/grassland.png',
   'LAND002': 'assets/maps/forest.png',
@@ -327,7 +327,7 @@ function installQuestionBank(bundle){
     }
   });
   QUESTION_BANK_READY=Object.keys(QUESTION_BANK_CACHE).some(k=>Array.isArray(QUESTION_BANK_CACHE[k])&&QUESTION_BANK_CACHE[k].length);
-  if(currentTab==='challenge')renderChallengeHome();
+  if(currentTab==='challenge'&&mainMode==='battle'&&challenge.active)renderBattle();
 }
 
 function localQuestionBatch(subject,excludeIds=[],limit=30){
@@ -358,7 +358,7 @@ async function ensureQuestionBank(subject){
     QUESTION_BANK_CACHE[subject]=local;
     QUESTION_BANK_LOADED[subject]=true;
     QUESTION_BANK_READY=QUESTION_BANK_READY||local.length>0;
-    if(currentTab==='challenge')renderChallengeHome();
+    if(currentTab==='challenge'&&mainMode==='battle'&&challenge.active)renderBattle();
     return local;
   }
 
@@ -367,7 +367,7 @@ async function ensureQuestionBank(subject){
   QUESTION_BANK_LOADED[subject]=true;
   saveQuestionBrowserCache(subject,QUESTION_BANK_CACHE[subject]);
   QUESTION_BANK_READY=Object.keys(QUESTION_BANK_CACHE).some(k=>Array.isArray(QUESTION_BANK_CACHE[k])&&QUESTION_BANK_CACHE[k].length);
-  if(currentTab==='challenge')renderChallengeHome();
+  if(currentTab==='challenge'&&mainMode==='battle'&&challenge.active)renderBattle();
   return QUESTION_BANK_CACHE[subject];
 }
 
@@ -559,7 +559,7 @@ function applyStudentState(s){
   ver.textContent=state.version||'';
   mailBadge.textContent=state.unreadMail||0;
   mailBadge.classList.toggle('hidden',!state.unreadMail);
-  renderYard();
+  if(mainMode==='home')renderYard();
 }
 
 async function prefetchStudentData(){
@@ -815,31 +815,61 @@ function getConfiguredPetSkills(pet){
   });
 }
 
+// 對戰畫面資源只屬於目前視圖；切頁取消動畫，不丟棄 challenge 答題與存檔狀態。
+let BATTLE_VIEW_EPOCH_V600=0;
+const BATTLE_TIMERS_V600=new Set(),BATTLE_ANIMATIONS_V600=new Set();
+function battleTimeoutV600_(callback,ms){
+  const timer=setTimeout(()=>{BATTLE_TIMERS_V600.delete(timer);callback();},ms);
+  BATTLE_TIMERS_V600.add(timer);return timer;
+}
+function cleanupBattleViewV600_(){
+  BATTLE_VIEW_EPOCH_V600++;
+  BATTLE_TIMERS_V600.forEach(clearTimeout);BATTLE_TIMERS_V600.clear();
+  BATTLE_ANIMATIONS_V600.forEach(finish=>finish(false));BATTLE_ANIMATIONS_V600.clear();
+  challenge.answering=false;
+  const root=document.getElementById('battleMain');if(root)root.innerHTML='';
+}
+function battleControlsV600_(){return document.getElementById('battleControls')||panel;}
 function switchMainMode(mode){
-  mainMode=['home','battle','upgrade'].includes(mode)?mode:'home';
+  const next=['home','battle','upgrade'].includes(mode)?mode:'home';
+  if(mainMode==='battle' && next!=='battle')cleanupBattleViewV600_();
+  mainMode=next;
+  document.getElementById('studentLayout')?.classList.toggle('battle-mode',mainMode==='battle');
   const y=document.getElementById('yard'),b=document.getElementById('battleMain');
-  const hb=document.getElementById('homeModeBtn'),bb=document.getElementById('battleModeBtn');
   if(y)y.classList.toggle('hidden',mainMode!=='home');
   if(b)b.classList.toggle('hidden',mainMode!=='battle');
   document.getElementById('upgradeMain')?.classList.toggle('hidden',mainMode!=='upgrade');
   document.getElementById('upgradeModeBtn')?.classList.toggle('active',mainMode==='upgrade');
-  hb?.classList.toggle('active',mainMode==='home');
-  bb?.classList.toggle('active',mainMode==='battle');
-  if(mainMode==='home')renderYard();else if(mainMode==='battle')renderBattleMain();
+  document.getElementById('homeModeBtn')?.classList.toggle('active',mainMode==='home');
+  document.getElementById('battleModeBtn')?.classList.toggle('active',mainMode==='battle');
+  if(mainMode==='home')renderYard();
+  else if(mainMode==='battle'){
+    clearInterval(wanderTimer);wanderTimer=null;
+    renderBattleMain();
+    if(challenge.active){renderBattle();}else if(currentTab==='challenge'){renderChallengeHome();}
+  }
+}
+function showBattleModeV600_(){
+  currentTab='challenge';
+  document.querySelectorAll('.tabbtn').forEach(btn=>btn.classList.toggle('active',btn.dataset.tab==='challenge'));
+  if(challenge.active)switchMainMode('battle');else renderChallengeHome();
 }
 function renderBattleMain(){
+  if(mainMode!=='battle' || challenge.answering)return;
   const root=document.getElementById('battleMain');if(!root)return;
-  root.classList.remove('empty');
+  if(!document.getElementById('battleControls'))root.innerHTML='<section id="battleScene" class="battle-stage-main" aria-label="戰鬥舞台"></section><section id="battleControls" class="battle-controls" aria-label="對戰操作與答題區"></section>';
+  const scene=document.getElementById('battleScene');if(!scene)return;
   const pet=state?.pets?.find(p=>String(p.petId)===String(challenge.petId));
-  if(!pet || !challenge.subject){
-    root.classList.add('empty');
-    root.innerHTML=`<div><div style="font-size:74px">⚔️</div><h2>寵物對戰</h2><p>請從右側選擇科目與出戰寵物。</p><button class="btn blue" onclick="switchTab('challenge',document.querySelector('[data-tab=challenge]'))">選擇對戰</button></div>`;
+  if(!challenge.active || !pet || !challenge.subject){
+    scene.classList.add('battle-intro');
+    scene.innerHTML='<div><div class="battle-intro-icon">⚔️</div><h2>寵物對戰</h2><p>選擇科目與夥伴，一起出發！</p></div>';
     return;
   }
+  scene.classList.remove('battle-intro');
   const mhp=Math.max(0,Number(challenge.monsterHp??challenge.monsterMaxHp??100));
   const mmax=Math.max(1,Number(challenge.monsterMaxHp||100));
   const battleBg=getBattleBackground(challenge.subject);
-  root.innerHTML=`<div class="battle-main-scene" ${battleBg?.image?`style="background-image:url('${esc(battleBg.image)}');background-size:cover;background-position:center"`:''}>
+  scene.innerHTML=`<div class="battle-main-scene" ${battleBg?.image?`style="background-image:url('${esc(battleBg.image)}');background-size:cover;background-position:center"`:''}>
     ${battleBg?.image?'':'<div class="battle-sky"></div><div class="battle-ground"></div>'}
     <div class="battle-status"><div><b>${esc(challenge.subject)}對戰</b>　怪物 ${challenge.monsterNo||1}</div><div>答對 ${challenge.status?.correct||0}　<span class="lives">${'❤️'.repeat(Math.max(0,3-(challenge.status?.wrong||0)))}${'🖤'.repeat(challenge.status?.wrong||0)}</span></div></div>
     <div class="battle-pet-side"><div class="battle-pet-name">${attributeIconHtml(getPetAttribute(pet),26)} ${esc(pet.name)} <span class="small">【${esc(getPetAttribute(pet))}】</span></div><div id="battlePetSprite" class="battle-pet-sprite">${getPetImage(pet.petId,pet.stage)?`<img src="${getPetImage(pet.petId,pet.stage)}">`:'🐾'}</div></div>
@@ -848,17 +878,19 @@ function renderBattleMain(){
 }
 function playPetAttackAnimation(damage){
   return new Promise(resolve=>{
-    const pet=document.getElementById('battlePetSprite');
-    const mon=document.getElementById('battleMonsterSprite');
-    const root=document.getElementById('battleMain');
-    if(pet){pet.classList.remove('attack-lunge');void pet.offsetWidth;pet.classList.add('attack-lunge');}
-    setTimeout(()=>{
-      if(mon){mon.classList.remove('hit-shake');void mon.offsetWidth;mon.classList.add('hit-shake');}
-      if(root){
-        const d=document.createElement('div');d.className='battle-damage-float';d.textContent='-'+damage;root.appendChild(d);setTimeout(()=>d.remove(),850);
-      }
+    const epoch=BATTLE_VIEW_EPOCH_V600;
+    const pet=document.getElementById('battlePetSprite'),mon=document.getElementById('battleMonsterSprite'),root=document.getElementById('battleScene');
+    if(mainMode!=='battle'||!pet||!mon||!root){resolve(false);return;}
+    const finish=result=>{BATTLE_ANIMATIONS_V600.delete(finish);resolve(result);};
+    BATTLE_ANIMATIONS_V600.add(finish);
+    pet.classList.remove('attack-lunge');void pet.offsetWidth;pet.classList.add('attack-lunge');
+    battleTimeoutV600_(()=>{
+      if(epoch!==BATTLE_VIEW_EPOCH_V600)return;
+      mon.classList.remove('hit-shake');void mon.offsetWidth;mon.classList.add('hit-shake');
+      const d=document.createElement('div');d.className='battle-damage-float';d.textContent='-'+damage;root.appendChild(d);
+      battleTimeoutV600_(()=>d.remove(),850);
     },260);
-    setTimeout(resolve,620);
+    battleTimeoutV600_(()=>{pet.classList.remove('attack-lunge');mon.classList.remove('hit-shake');finish(true);},620);
   });
 }
 
@@ -960,8 +992,8 @@ function wanderPets(){
 }
 
 function petTalk(p,el){document.querySelectorAll('.bubble').forEach(x=>x.remove());const b=document.createElement('div');b.className='bubble';b.textContent=p.dialogs[Math.floor(Math.random()*p.dialogs.length)];b.style.left=(el.offsetLeft+el.offsetWidth/2)+'px';b.style.top=el.offsetTop+'px';yard.appendChild(b);setTimeout(()=>b.remove(),2400);}
-function switchTab(tab,btn){currentTab=tab;if(tab==='home')switchMainMode('home');if(tab==='challenge')switchMainMode('battle');if(tab==='upgrade')switchMainMode('upgrade');document.querySelectorAll('.tabbtn').forEach(x=>x.classList.remove('active'));btn?.classList.add('active');renderCurrentTab();}
-async function renderCurrentTab(){if(currentTab==='home')renderHome();if(currentTab==='upgrade')await renderUpgrade();if(currentTab==='bag')await renderBag();if(currentTab==='challenge')renderChallengeHome();if(currentTab==='mail')await renderMail();if(currentTab==='shop')await renderShop();}
+function switchTab(tab,btn){currentTab=tab;if(tab==='challenge')challenge.active=false;if(tab==='upgrade')switchMainMode('upgrade');else if(tab!=='challenge')switchMainMode('home');document.querySelectorAll('.tabbtn').forEach(x=>x.classList.remove('active'));btn?.classList.add('active');renderCurrentTab();}
+async function renderCurrentTab(){if(currentTab==='home')renderHome();if(currentTab==='upgrade')await renderUpgrade();if(currentTab==='bag')await renderBag();if(currentTab==='challenge'){if(challenge.active){switchMainMode('battle');renderBattle();}else renderChallengeHome();}if(currentTab==='mail')await renderMail();if(currentTab==='shop')await renderShop();}
 function renderHome(){
   const petsHere=state.pets.filter(p=>String(p.landId)===String(state.activeLandId));
   const ownedBgs=(state.backgrounds||[]).map(id=>liveLandById(id)).filter(Boolean);
@@ -1145,9 +1177,13 @@ async function ensureChallengeHomeMeta(){
 }
 
 function renderChallengeHome(){
+  currentTab='challenge';challenge.active=false;
+  cleanupBattleViewV600_();
+  if(mainMode!=='battle'){switchMainMode('battle');return;}
+  renderBattleMain();
   const subjects=['國語','數學','英文','自然','社會'];
   const status=state?.challengeStatus||{};
-  panel.innerHTML=`<h3>⚔️ 寵物對戰挑戰</h3>
+  battleControlsV600_().innerHTML=`<h3>⚔️ 寵物對戰挑戰</h3>
     <p class="small">直接選科目即可。題庫只會在進入該科目時載入，不再先檢查五科題庫。</p>
     ${subjects.map(s=>{
       const st=status[s]||{correct:0,wrong:0,locked:false};
@@ -1165,18 +1201,25 @@ function renderChallengeHome(){
     }).join('')}`;
 }
 async function chooseChallenge(subject){
-  challenge.subject=subject;
+  const account=currentId;
+  cleanupBattleViewV600_();const epoch=BATTLE_VIEW_EPOCH_V600;
+  try{await flushChallengeAnswers(true);}catch(e){alert(e.message||e);return;}
+  if(account!==currentId||epoch!==BATTLE_VIEW_EPOCH_V600)return;
+  challenge.active=false;challenge.subject=subject;challenge.petId='';
   challenge.savedProgress=null;
   switchMainMode('battle');
   renderBattleMain();
+  const viewEpoch=BATTLE_VIEW_EPOCH_V600;
+  const isCurrent=()=>account===currentId&&viewEpoch===BATTLE_VIEW_EPOCH_V600&&mainMode==='battle'&&challenge.subject===subject;
 
   if(!QUESTION_BANK_LOADED[subject]){
-    panel.innerHTML=`<h3>⚔️ ${esc(subject)}對戰</h3><div class="petcard">載入${esc(subject)}題庫中…</div>`;
+    battleControlsV600_().innerHTML=`<h3>⚔️ ${esc(subject)}對戰</h3><div class="petcard">載入${esc(subject)}題庫中…</div>`;
     showWaiting('載入題庫中...');
     try{await ensureQuestionBank(subject);}finally{hideWaiting();}
   }
+  if(!isCurrent())return;
   if(!(QUESTION_BANK_CACHE[subject]||[]).length){
-    panel.innerHTML=`<h3>⚔️ ${esc(subject)}對戰</h3>
+    battleControlsV600_().innerHTML=`<h3>⚔️ ${esc(subject)}對戰</h3>
       <div class="petcard">這個科目目前沒有啟用中的題目。</div>
       <button class="btn gray" onclick="renderChallengeHome()">返回</button>`;
     return;
@@ -1184,15 +1227,17 @@ async function chooseChallenge(subject){
 
   await ensureBattleConfigsV5106();
 
+  if(!isCurrent())return;
   let saved=null;
   try{saved=await gsRaw('getBattleProgressV5105',currentId,subject);}catch(e){}
+  if(!isCurrent())return;
   challenge.savedProgress=saved&&saved.exists?saved:null;
 
   const savedPet=challenge.savedProgress
     ? state.pets.find(p=>String(p.petId)===String(challenge.savedProgress.petId))
     : null;
 
-  panel.innerHTML=`<h3>⚔️ ${esc(subject)}對戰</h3>
+  battleControlsV600_().innerHTML=`<h3>⚔️ ${esc(subject)}對戰</h3>
     ${challenge.savedProgress?`<div class="petcard">
       <b>💾 發現對戰存檔</b><br>
       ${savedPet?`${esc(savedPet.name)} Lv.${savedPet.level}`:`${esc(challenge.savedProgress.petId)}`}<br>
@@ -1210,18 +1255,24 @@ async function chooseChallenge(subject){
 }
 
 async function startNewChallengeV5105(){
+  if(mainMode!=='battle'||challenge.answering||challenge.saving)return;
+  const epoch=BATTLE_VIEW_EPOCH_V600,account=currentId;
   if(challenge.savedProgress){
     if(!confirm('重新開始會刪除這一科目前的怪物進度，答題紀錄不會被刪除。確定重新開始嗎？'))return;
     try{await gsRaw('clearBattleProgressV5105',currentId,challenge.subject);}catch(e){alert(e.message||e);return;}
+    if(epoch!==BATTLE_VIEW_EPOCH_V600||account!==currentId)return;
     challenge.savedProgress=null;
   }
   startChallengeUI();
 }
 
 async function resumeSavedChallengeV5105(){
+  if(mainMode!=='battle'||challenge.answering||challenge.saving)return;
+  const epoch=BATTLE_VIEW_EPOCH_V600,account=currentId;
   const save=challenge.savedProgress;
   if(!save)return startChallengeUI();
   try{
+    challenge.subject=String(save.subject||challenge.subject);
     const localStatus=state?.challengeStatus?.[challenge.subject]||{correct:0,wrong:0,exp:0,locked:false};
     if(localStatus.locked || Number(localStatus.wrong||0)>=3){
       showLocked({locked:true,status:localStatus,resetAt:'明早 7:00'});
@@ -1238,6 +1289,7 @@ async function resumeSavedChallengeV5105(){
     if(!pool.length)pool=localQuestionBatch(challenge.subject,[],30);
     if(!pool.length)throw new Error('這個科目目前沒有可用題目');
 
+    if(epoch!==BATTLE_VIEW_EPOCH_V600||account!==currentId||mainMode!=='battle')return;
     challenge.petId=String(save.petId);
     challenge.questions=pool;
     challenge.qIndex=0;
@@ -1246,19 +1298,21 @@ async function resumeSavedChallengeV5105(){
     challenge.seen=Array.isArray(save.seen)?save.seen.slice(-80):[];
     challenge.monsterNo=Math.max(1,Number(save.monsterNo||1));
     challenge.monsterCfg=getMonsterForBattle(challenge.subject,challenge.monsterNo);
-    challenge.monsterMaxHp=getMonsterHp(challenge.monsterCfg,challenge.monsterNo);
+    challenge.monsterMaxHp=Math.max(1,Number(save.monsterMaxHp)||getMonsterHp(challenge.monsterCfg,challenge.monsterNo));
     const savedHp=Math.max(1,Number(save.monsterHp||challenge.monsterMaxHp));
     challenge.monsterHp=Math.min(challenge.monsterMaxHp,savedHp);
     challenge.selectedSkill=null;
     challenge.question=null;
     challenge.lastMsg=`<span class="success">💾 已讀取存檔，從怪物 ${challenge.monsterNo} 繼續。</span>`;
-    switchMainMode('battle');renderBattleMain();renderBattle();
+    challenge.active=true;switchMainMode('battle');renderBattle();
   }catch(e){alert(e.message||e);}
 }
 
 function getPetSkills(pet){const cfg=PET_CONFIGS[String(pet.petId)]||{};const arr=Array.isArray(cfg.skills)?cfg.skills:[];return arr.filter(s=>Number(s.minStage||1)<=Number(pet.stage||1));}
 async function startChallengeUI(){
-  challenge.petId=chPet.value;
+  if(mainMode!=='battle'||challenge.answering||challenge.saving)return;
+  const epoch=BATTLE_VIEW_EPOCH_V600,account=currentId;
+  challenge.petId=document.getElementById('chPet')?.value||challenge.petId;
   try{
     const localStatus=state?.challengeStatus?.[challenge.subject]||{correct:0,wrong:0,exp:0,locked:false};
     if(localStatus.locked || Number(localStatus.wrong||0)>=3){
@@ -1269,13 +1323,14 @@ async function startChallengeUI(){
     // 題庫已在登入後背景預載；正常情況不再等 Apps Script。
     let pool=localQuestionBatch(challenge.subject,[],30);
     if(!pool.length){
-      panel.innerHTML='<div class="petcard">題庫第一次載入中…</div>';
+      battleControlsV600_().innerHTML='<div class="petcard">題庫第一次載入中…</div>';
       showWaiting('載入題庫中...');
       try{await ensureQuestionBank(challenge.subject);}finally{hideWaiting();}
       pool=localQuestionBatch(challenge.subject,[],30);
     }
     if(!pool.length)throw new Error('這個科目目前沒有可用題目；若剛登入，請等 1 秒後再按一次開始戰鬥。');
 
+    if(epoch!==BATTLE_VIEW_EPOCH_V600||account!==currentId||mainMode!=='battle')return;
     challenge.questions=pool;
     challenge.qIndex=0;
     challenge.status={...localStatus};
@@ -1288,20 +1343,31 @@ async function startChallengeUI(){
     challenge.monsterMaxHp=getMonsterHp(challenge.monsterCfg,challenge.monsterNo);
     challenge.monsterHp=challenge.monsterMaxHp;
     challenge.selectedSkill=null;challenge.question=null;challenge.lastMsg='';
-    switchMainMode('battle');renderBattleMain();renderBattle();
+    challenge.active=true;switchMainMode('battle');renderBattle();
   }catch(e){alert(e.message||e);}
 }
+function battleSkillPowerV600_(skill){return '威力 '+esc(skill.finalDamage||skill.damage)+(BigInt(skill.bonusDamage||'0')>0?'（強化 +'+esc(skill.bonusDamage)+'）':'');}
 function renderBattle(){
-  const pet=state.pets.find(p=>p.petId===challenge.petId);if(!pet)return;
+  if(mainMode!=='battle'||!challenge.active||challenge.answering)return;
+  const pet=state.pets.find(p=>String(p.petId)===String(challenge.petId));if(!pet)return;
   renderBattleMain();
-  const skills=getConfiguredPetSkills(pet);
-  panel.innerHTML=`<h3>⚔️ ${esc(challenge.subject)}對戰控制</h3>
-  <div class="petcard"><b>${esc(pet.name)}</b> Lv.${pet.level}・第${pet.stage}階<br><span class="small">怪物 ${challenge.monsterNo}｜HP ${Math.ceil(challenge.monsterHp)} / ${challenge.monsterMaxHp}</span></div>
-  ${challenge.lastMsg?`<div style="margin:8px 0">${challenge.lastMsg}</div>`:''}
-  <h4>選擇技能</h4><div class="skill-grid">${skills.map(s=>`<button class="btn purple skill-btn" onclick="useBattleSkill('${s.id}')"><b>${s.kind==='general'?'⚔️':attributeIconHtml(s.attribute||getPetAttribute(pet),20)} ${esc(s.name)}</b><br><span class="small" style="color:white">威力 ${s.damage}</span></button>`).join('')}</div>
-  <div class="nav"><button class="btn blue" onclick="saveBattleAndExitV5105(this)">💾 儲存並離開</button><button class="btn gray" onclick="finishChallengeUI()">結束對戰</button><button class="btn secondary" onclick="switchMainMode('home')">看一下小屋</button></div>`;
+  const skillScroll=battleControlsV600_().querySelector('.skill-grid')?.scrollTop||0;
+  const skills=getConfiguredPetSkills(pet),locked=challenge.status?.locked||Number(challenge.status?.wrong||0)>=3;
+  battleControlsV600_().innerHTML=`<div class="battle-controls-heading"><h2>⚔️ ${esc(challenge.subject)}・${esc(pet.name)} Lv.${pet.level}</h2><span>累積 EXP ${Number(challenge.status?.exp||0)}</span></div>
+    <div id="battleResult" class="battle-result" role="status">${challenge.lastMsg||'選擇技能，再回答題目發動攻擊。'}</div>
+    ${locked?'<div class="qbox"><h3>今日對戰結束</h3><p>已達 3 次錯誤，明早 7:00 後重置。</p><button class="btn gray" onclick="renderChallengeHome()">返回挑戰首頁</button></div>':`<div class="battle-operation-grid"><section class="battle-skills"><h3>選擇技能</h3><div class="skill-grid">${skills.map(skill=>`<button class="btn purple skill-btn ${challenge.selectedSkill?.id===skill.id?'selected':''}" aria-pressed="${challenge.selectedSkill?.id===skill.id}" onclick="useBattleSkill('${skill.id}')"><b>${skill.kind==='general'?'⚔️':attributeIconHtml(skill.attribute||getPetAttribute(pet),20)} ${esc(skill.name)}</b><br><span>${battleSkillPowerV600_(skill)}</span></button>`).join('')}</div></section><section id="battleQuestionArea" class="battle-question-area" aria-label="題目與選項">${challenge.question&&challenge.selectedSkill?battleQuestionHtmlV600_():'<div class="battle-question-empty">選擇左側技能，即可開始答題。</div>'}</section></div>`}
+    <div class="battle-exit-actions nav"><button class="btn blue" ${challenge.saving?'disabled':''} onclick="saveBattleAndExitV5105(this)">💾 儲存並離開</button><button class="btn gray" onclick="finishChallengeUI()">結束對戰</button><button class="btn secondary" onclick="switchTab('home',document.querySelector('[data-tab=home]'))">🏠 小屋</button><button class="btn gray" onclick="logout()">登出</button></div>`;
+  const grid=battleControlsV600_().querySelector('.skill-grid');if(grid)grid.scrollTop=skillScroll;
 }
-function useBattleSkill(skillId){const pet=state.pets.find(p=>p.petId===challenge.petId);const skill=getConfiguredPetSkills(pet).find(s=>String(s.id)===String(skillId));if(!skill)return;challenge.selectedSkill=skill;if(!challenge.questions?.length || challenge.qIndex>=challenge.questions.length){loadMoreBattleQuestions();return;}challenge.question=challenge.questions[challenge.qIndex];renderBattleQuestion();}
+function useBattleSkill(skillId){
+  if(mainMode!=='battle'||!challenge.active||challenge.answering||challenge.saving||challenge.status?.locked||Number(challenge.status?.wrong||0)>=3)return;
+  const pet=state.pets.find(p=>String(p.petId)===String(challenge.petId));
+  const skill=getConfiguredPetSkills(pet).find(s=>String(s.id)===String(skillId));if(!skill)return;
+  challenge.selectedSkill=skill;
+  if(!challenge.questions?.length||challenge.qIndex>=challenge.questions.length){loadMoreBattleQuestions();return;}
+  challenge.question=challenge.questions[challenge.qIndex];renderBattleQuestion();
+}
+function cancelBattleSkillV600_(){if(challenge.answering)return;challenge.question=null;challenge.selectedSkill=null;renderBattle();}
 
 const QUESTION_IMAGE_FALLBACK_BY_ID={
   'M001':'IMG001','M002':'IMG001',
@@ -1335,11 +1401,10 @@ function questionImageHtml(q){
   </div>`;
 }
 
-function renderBattleQuestion(){
-  switchMainMode('battle');
-  renderBattleMain();
+function renderBattleQuestion(){renderBattle();}
+function battleQuestionHtmlV600_(){
   const q=challenge.question,skill=challenge.selectedSkill;
-  if(!q||!skill){renderBattle();return;}
+  if(!q||!skill)return '';
 
   let answer='';
   if(String(q.type).includes('填充')){
@@ -1350,16 +1415,19 @@ function renderBattleQuestion(){
     answer=(q.options||[]).map((o,i)=>`<button class="btn option blue" onclick="sendBattleAnswer('${String.fromCharCode(65+i)}')">${String.fromCharCode(65+i)}. ${formatMathText(o)}</button>`).join('');
   }
 
-  panel.innerHTML=`<div class="question-overlay">
-    <div class="row"><b>${esc(skill.icon||'✨')} ${esc(skill.name)}</b><span>威力 ${skill.damage}</span></div>
+  return `<div class="battle-question">
+    <div class="row"><b>${esc(skill.icon||'✨')} ${esc(skill.name)}</b><span>${battleSkillPowerV600_(skill)}</span></div>
     <div class="qtext">${formatMathText(q.text)}</div>
     ${questionImageHtml(q)}
     ${answer}
-    <button class="btn gray" style="margin-top:8px" onclick="renderBattle()">取消技能</button>
+    <button class="btn gray" style="margin-top:8px" onclick="cancelBattleSkillV600_()">取消技能</button>
   </div>`;
 }
 async function sendBattleAnswer(ans){
+  if(mainMode!=='battle'||!challenge.active||challenge.answering||challenge.saving||challenge.status?.locked||Number(challenge.status?.wrong||0)>=3)return;
   const q=challenge.question,skill=challenge.selectedSkill;if(!q||!skill)return;
+  const epoch=BATTLE_VIEW_EPOCH_V600;challenge.answering=true;
+  battleControlsV600_().querySelectorAll('button,input').forEach(el=>el.disabled=true);
   const good=normAns(ans)===normAns(q.answer);
   let gained=0;
   if(good){challenge.status.correct=Number(challenge.status.correct||0)+1;gained=challengeLocalExp(challenge.status.correct);challenge.status.exp=Number(challenge.status.exp||0)+gained;}
@@ -1371,14 +1439,14 @@ async function sendBattleAnswer(ans){
   challenge.lastMsg=good?`<span class="success">✅ 正確！${esc(skill.name)}造成 <span class="damage-pop">${damage}</span> 傷害，+${gained} EXP</span>`:`<span class="wrong">❌ 答錯，只造成 30% 傷害：<span class="damage-pop">${damage}</span><br>正確答案：${formatMathText(q.answer)} ${formatMathText(q.explanation||'')}</span>`;
   challenge.question=null;challenge.selectedSkill=null;
 
-  // 先播放寵物向怪物撞擊的動畫，再扣血。
-  await playPetAttackAnimation(damage);
   challenge.monsterHp=Math.max(0,Number(challenge.monsterHp||0)-damage);
 
   if(challenge.status.wrong>=3){
-    renderBattleMain();
-    await flushChallengeAnswers(true);
-    panel.innerHTML=`<div class="qbox"><h3>今日對戰結束</h3>${challenge.lastMsg}<p>答對：${challenge.status.correct} 題</p><p>明早 7:00 後重置。</p><button class="btn gray" onclick="refreshState().then(()=>{renderChallengeHome();renderBattleMain();})">返回</button></div>`;
+    challenge.status.locked=true;
+    if(state){state.challengeStatus=state.challengeStatus||{};state.challengeStatus[challenge.subject]={...challenge.status};}
+    await playPetAttackAnimation(damage);if(epoch===BATTLE_VIEW_EPOCH_V600)challenge.answering=false;
+    try{await flushChallengeAnswers(true);}catch(e){alert(e.message||e);}
+    if(epoch===BATTLE_VIEW_EPOCH_V600&&mainMode==='battle')renderBattle();
     return;
   }
 
@@ -1390,15 +1458,18 @@ async function sendBattleAnswer(ans){
     challenge.monsterHp=challenge.monsterMaxHp;
   }
   if(challenge.pending.length>=12)flushChallengeAnswers(false);
-  renderBattleMain();renderBattle();
+  await playPetAttackAnimation(damage);if(epoch===BATTLE_VIEW_EPOCH_V600)challenge.answering=false;
+  if(epoch===BATTLE_VIEW_EPOCH_V600&&mainMode==='battle')renderBattle();
 }
 async function loadMoreBattleQuestions(){
+  const epoch=BATTLE_VIEW_EPOCH_V600;
   try{
     let qs=localQuestionBatch(challenge.subject,challenge.seen.slice(-80),30);
     if(!qs.length){
       await ensureQuestionBank(challenge.subject);
       qs=localQuestionBatch(challenge.subject,challenge.seen.slice(-80),30);
     }
+    if(epoch!==BATTLE_VIEW_EPOCH_V600||mainMode!=='battle')return;
     challenge.questions=qs||[];
     challenge.qIndex=0;
     if(!challenge.questions.length)throw new Error('沒有可用題目');
@@ -1421,14 +1492,14 @@ async function flushChallengeAnswers(force){
 }
 
 async function saveBattleAndExitV5105(btn){
-  if(challenge.saving)return;
+  if(challenge.saving||challenge.answering)return;
   if(!challenge.subject || !challenge.petId)return;
+  const epoch=BATTLE_VIEW_EPOCH_V600,account=currentId;
   challenge.saving=true;
   const oldText=btn?.innerHTML||'';
   if(btn){btn.disabled=true;btn.innerHTML='⏳ 儲存中...';}
   try{
     // 先把尚未同步的答題結果送出，避免答題紀錄與怪物進度不同步。
-    await flushChallengeAnswers(true);
     const payload={
       subject:challenge.subject,
       petId:challenge.petId,
@@ -1437,19 +1508,19 @@ async function saveBattleAndExitV5105(btn){
       monsterMaxHp:Math.max(1,Number(challenge.monsterMaxHp||1)),
       seen:Array.isArray(challenge.seen)?challenge.seen.slice(-80):[]
     };
-    await gsRaw('saveBattleProgressV5105',currentId,payload);
+    await flushChallengeAnswers(true);
+    await gsRaw('saveBattleProgressV5105',account,payload);
+    if(account!==currentId||epoch!==BATTLE_VIEW_EPOCH_V600)return;
     challenge.savedProgress=null;
     challenge.question=null;
     challenge.selectedSkill=null;
     currentTab='challenge';
-    switchMainMode('battle');
-    renderBattleMain();
     renderChallengeHome();
     const note=document.createElement('div');
     note.className='success';
     note.textContent=`💾 已儲存：${payload.subject}・怪物 ${payload.monsterNo}`;
-    panel.prepend(note);
-    setTimeout(()=>note.remove(),2200);
+    battleControlsV600_().prepend(note);
+    battleTimeoutV600_(()=>note.remove(),2200);
   }catch(e){
     alert('儲存失敗：'+(e.message||e));
     if(btn){btn.disabled=false;btn.innerHTML=oldText;}
@@ -1459,14 +1530,16 @@ async function saveBattleAndExitV5105(btn){
 }
 
 async function finishChallengeUI(){
+  if(challenge.answering||challenge.saving)return;
+  const epoch=BATTLE_VIEW_EPOCH_V600,account=currentId;
   if(challenge.subject && challenge.petId){
     const ok=confirm('這會結束目前畫面，但不會儲存這一隻怪物的 HP 與怪物編號。若想下次接著打，請按「💾 儲存並離開」。\n\n仍要直接結束嗎？');
     if(!ok)return;
   }
   try{
     await flushChallengeAnswers(true);
+    if(epoch!==BATTLE_VIEW_EPOCH_V600||account!==currentId)return;
     currentTab='challenge';
-    switchMainMode('battle');
     challenge.subject='';
     challenge.petId='';
     challenge.savedProgress=null;
@@ -1481,7 +1554,7 @@ function showLocked(result){
     state.challengeStatus[challenge.subject]={...status,locked:true};
   }
   challenge.question=null;challenge.selectedSkill=null;
-  panel.innerHTML=`<div class="qbox"><h3>今日對戰已結束</h3><p>答對：${Number(status.correct||0)} 題</p><p>累積 EXP：${Number(status.exp||0)}</p><p>${esc(result?.resetAt||'明早 7:00')} 後重置。</p><button class="btn gray" onclick="renderChallengeHome()">返回</button></div>`;
+  battleControlsV600_().innerHTML=`<div class="qbox"><h3>今日對戰已結束</h3><p>答對：${Number(status.correct||0)} 題</p><p>累積 EXP：${Number(status.exp||0)}</p><p>${esc(result?.resetAt||'明早 7:00')} 後重置。</p><button class="btn gray" onclick="renderChallengeHome()">返回</button></div>`;
 }
 async function renderMail(){
   renderMailFromCache();
@@ -1706,6 +1779,8 @@ async function useBackgroundFromShop(id){
   }
 }
 function logout(){
+  cleanupBattleViewV600_();challenge.active=false;
+  document.getElementById('studentLayout')?.classList.remove('battle-mode');
   STUDENT_TOKEN_V600='';UPGRADE_AT_V600=0;UPGRADE_PET_V600='';UPGRADE_LOADING_V600=null;STONE_CATALOG_V600=[];UPGRADE_READY_V600=false;
   UPGRADE_NOTICE_V600='';UPGRADE_MODE_V600='exp';
   currentId='';state=null;mainMode='home';inventory=[];mailbox=[];shop=null;mailboxLoaded=false;mailboxAt=0;adminPassword='';sessionStorage.removeItem('petHouseAdminPassword');

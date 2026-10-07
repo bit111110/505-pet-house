@@ -131,7 +131,7 @@ const previousFrontend=execFileSync('git',['show','HEAD:app.js'],{cwd:root,encod
 const previousUI=vm.createContext({localStorage:{getItem:()=>null},sessionStorage:{getItem:()=>null},window:{}});
 vm.runInContext(previousFrontend,previousUI);
 const normalizeLines = text => text.replace(/\r\n/g,'\n');
-for(const name of ['renderBattleMain','renderBattle','renderBattleQuestion','sendBattleAnswer'])assert.equal(normalizeLines(ui[name].toString()),normalizeLines(previousUI[name].toString()),name+' UI unchanged');
+for(const name of ['normAns','challengeLocalExp','getConfiguredPetSkills','getMonsterHp'])assert.equal(normalizeLines(ui[name].toString()),normalizeLines(previousUI[name].toString()),name+' game rule unchanged');
 const extractAPI = source => new Map([...source.match(/const API = \{([\s\S]*?)\n    \};/)[1].matchAll(/^\s*(\w+)\s*:\s*(\w+)/gm)].map(m=>[m[1],m[2]]));
 const api=extractAPI(backend);
 for(const [action] of extractAPI(previousBackend))assert.ok(api.has(action),'preserved API '+action);
@@ -179,4 +179,4 @@ async function testUpgradeDOM() {
   await vm.runInContext('useStoneV600()',ui);
   assert.equal(uiCache.has('petHouseStonePendingV600:50501'),false);
 }
-testUpgradeDOM().then(()=>console.log('PASS V6.0: additive/idempotent setup, 12 stones, authentication, ownership/attribute/unlock checks, all 3 skill kinds, exact stacking, retry/recovery with blank rows, targeted writes, cross-device persistence, large upgrade DOM/candy controls/formula display/double-click guard, preserved API/battle UI/mailbox drops.')).catch(error=>{console.error(error);process.exitCode=1;});
+testUpgradeDOM().then(()=>console.log('PASS V6.0: additive/idempotent setup, 12 stones, authentication, ownership/attribute/unlock checks, all 3 skill kinds, exact stacking, retry/recovery with blank rows, targeted writes, cross-device persistence, large upgrade DOM/candy controls/formula display/double-click guard, preserved API/battle rules/mailbox drops.')).catch(error=>{console.error(error);process.exitCode=1;});
