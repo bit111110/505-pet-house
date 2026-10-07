@@ -3,7 +3,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const assert = require('node:assert/strict');
 const { execFileSync } = require('node:child_process');
-const { randomUUID } = require('node:crypto');
+const { randomUUID,createHash } = require('node:crypto');
 const root = path.resolve(__dirname, '..');
 const backend = fs.readFileSync(path.join(root, 'apps-script/Code.gs'), 'utf8');
 const frontend = fs.readFileSync(path.join(root, 'app.js'), 'utf8');
@@ -50,7 +50,10 @@ const context = vm.createContext({ console, Date, Math, JSON, BigInt, Set, Map, 
     // A lost response is injected only after ALL inventory/receipt/mail updates have committed.
     events.forEach(e=>{if(fault)fault(e,'after');});return {};
   }}},
-  Utilities: { getUuid: randomUUID },
+  Utilities: { getUuid: randomUUID,DigestAlgorithm:{SHA_256:'sha256'},Charset:{UTF_8:'utf8'},computeDigest:(_algorithm,value)=>[...createHash('sha256').update(value).digest()],formatDate:(date,tz,format)=>{
+    const parts=Object.fromEntries(new Intl.DateTimeFormat('en-US',{timeZone:tz,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'}).formatToParts(date).map(p=>[p.type,p.value]));
+    const tokens={yyyy:parts.year,MM:parts.month,dd:parts.day,HH:parts.hour,mm:parts.minute,ss:parts.second};return format.replace(/yyyy|MM|dd|HH|mm|ss/g,token=>tokens[token]);
+  } },
   CacheService: { getScriptCache: () => ({ get: key => cache.get(key) || null, put: (key, value) => cache.set(key, value), remove: key => cache.delete(key) }) },
   LockService: { getScriptLock: () => ({ waitLock() { assert.equal(locked, false); locked = true; }, releaseLock() { locked = false; } }) }
 });

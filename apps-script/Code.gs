@@ -354,6 +354,7 @@ function decoratePet_(p,cfg){
 function expNeeded_(level){ return 20 + (Number(level)-1)*5; }
 
 function addPetExp_(studentId,petId,amount){
+  assertNoPendingChallengeBatchV600_(String(studentId).trim(),String(petId));
   const sh=SpreadsheetApp.getActive().getSheetByName(SHEETS.PETS), hm=headerMap_(sh), vals=sh.getDataRange().getValues();
   for(let i=1;i<vals.length;i++){
     if(String(vals[i][hm['學號']-1]).trim()===String(studentId).trim() && String(vals[i][hm['寵物ID']-1])===String(petId)){
@@ -817,31 +818,84 @@ function startChallengeBatch(studentId,subject,petId){
   return {ok:true,questions,status,resetAt:nextResetText_()};
 }
 /** 一次同步多題答案；伺服器會重新驗證答案，不直接相信前端計分 */
-function syncChallengeBatch(studentId,subject,petId,answers){
-  const id=String(studentId).trim(); validatePetOwnership_(id,petId);
-  const rec=getOrCreateChallenge_(id,subject,petId);
-  let wrong=Number(rec.sheet.getRange(rec.row,rec.hm['錯誤數']).getValue()||0);
-  let correct=Number(rec.sheet.getRange(rec.row,rec.hm['答對數']).getValue()||0);
-  let totalExp=Number(rec.sheet.getRange(rec.row,rec.hm['總EXP']).getValue()||0);
-  const qMap={}; cachedQuestionObjectsDisplay_().forEach(x=>qMap[String(x['題目ID'])]=x);
-  let gainedTotal=0, processed=0;
-  for(const a of (answers||[])){
-    if(wrong>=3) break;
-    const q=qMap[String(a.questionId)]; if(!q || String(q['科目'])!==String(subject)) continue;
-    const good=normalizeAnswer_(a.answer)===normalizeAnswer_(q['答案']);
-    if(good){ correct++; const g=challengeExpForCorrectCount_(correct); totalExp+=g; gainedTotal+=g; }
-    else wrong++;
-    processed++;
-  }
-  if(gainedTotal>0) addPetExp_(id,petId,gainedTotal);
-  rec.sheet.getRange(rec.row,rec.hm['答對數']).setValue(correct);
-  rec.sheet.getRange(rec.row,rec.hm['錯誤數']).setValue(wrong);
-  rec.sheet.getRange(rec.row,rec.hm['總EXP']).setValue(totalExp);
-  rec.sheet.getRange(rec.row,rec.hm['寵物ID']).setValue(petId);
-  rec.sheet.getRange(rec.row,rec.hm['最後更新']).setValue(new Date());
-  return {ok:true,processed,gained:gainedTotal,status:{correct,wrong,exp:totalExp,locked:wrong>=3},locked:wrong>=3,resetAt:nextResetText_()};
+// 每批一列，沿用獎勵紀錄；不把永久歷史塞進單一儲存格或快取。
+const CHALLENGE_BATCH_HEADERS_V600=['答題批次ID','答題科目','答題寵物ID','答題內容','答題交易狀態','答題結果'];
+function challengeBatchRecordsV600_(studentId,batchId){
+  const sh=SpreadsheetApp.getActive().getSheetByName(SHEETS.REWARDS),hm=headerMap_(sh);
+  if(!CHALLENGE_BATCH_HEADERS_V600.every(h=>hm[h]))throw new Error('請老師先執行 setupOrUpgradeV600() 補上答題批次欄位');
+  if(sh.getLastRow()<2)return [];
+  const n=sh.getLastRow()-1,ids=sh.getRange(2,hm['學號'],n,1).getValues(),bids=sh.getRange(2,hm['答題批次ID'],n,1).getValues(),statuses=sh.getRange(2,hm['答題交易狀態'],n,1).getValues(),rows=[];
+  for(let i=0;i<n;i++)if(String(ids[i][0]).trim()===studentId && bids[i][0] && (String(bids[i][0])===String(batchId||'')||statuses[i][0]==='SUBMITTED'))rows.push({...rowObject_(sh,sh.getRange(i+2,1,1,sh.getLastColumn()).getValues()[0]),_row:i+2});
+  return rows;
 }
-
+function assertNoPendingChallengeBatchV600_(studentId,petId){
+  const sh=SpreadsheetApp.getActive().getSheetByName(SHEETS.REWARDS);
+  if(!sh||!headerMap_(sh)['答題批次ID'])return;
+  if(challengeBatchRecordsV600_(studentId).some(r=>r['答題交易狀態']==='SUBMITTED' && (!petId||String(r['答題寵物ID'])===String(petId))))throw new Error('答題批次尚未確認完成，請先重試原批次；確認前不能變更寵物 EXP');
+}
+function syncChallengeBatch(studentId,subject,petId,answers,batchId){
+  const id=String(studentId).trim(),sub=String(subject).trim(),pid=String(petId);
+  // 也接受第四參數 envelope；舊四參數陣列有安全指紋 fallback，新版每批使用 UUID。
+  if(!Array.isArray(answers)&&answers?.batchId){batchId=batchId||answers.batchId;answers=answers.answers;}
+  if(!id||!['國語','數學','英文','自然','社會'].includes(sub)||!Array.isArray(answers)||!answers.length||answers.length>100)throw new Error('答題批次資料無效');
+  const normalized=answers.map(a=>({questionId:String(a?.questionId||''),answer:String(a?.answer??'')}));
+  const content=JSON.stringify({subject:sub,petId:pid,answers:normalized});
+  if(content.length>30000)throw new Error('答題批次內容過長');
+  let bid=String(batchId||'');
+  if(!bid){
+    const digest=Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256,content,Utilities.Charset.UTF_8);
+    bid='LEGACY-'+digest.map(byte=>(byte&255).toString(16).padStart(2,'0')).join('');
+  }
+  if(!/^[A-Za-z0-9-]{16,100}$/.test(bid))throw new Error('batchId 格式無效');
+  const lock=LockService.getScriptLock();lock.waitLock(12000);
+  try{
+    const records=challengeBatchRecordsV600_(id,bid),matches=records.filter(r=>String(r['答題批次ID'])===bid);
+    if(matches.length>1)throw new Error('答題批次識別重複，請老師核對');
+    const existing=matches[0];
+    if(existing){
+      if(String(existing['答題內容'])!==content||String(existing['答題科目'])!==sub||String(existing['答題寵物ID'])!==pid)throw new Error('同一 batchId 不可用於不同答題內容');
+      if(existing['答題交易狀態']==='COMMITTED')return JSON.parse(String(existing['答題結果']));
+      throw new Error('答題批次結果尚未確認，請稍後以原 batchId 重試；不會重複計分');
+    }
+    if(records.some(r=>r['答題交易狀態']==='SUBMITTED'))throw new Error('請先確認上一筆答題批次，不會重複計分');
+    requireMailSheetsServiceV600_();
+    const ss=SpreadsheetApp.getActive(),ps=ss.getSheetByName(SHEETS.PETS),ph=headerMap_(ps);
+    const pet=readRowsWithPositionV600_(ps).find(p=>String(p['學號']).trim()===id && String(p['寵物ID'])===pid);
+    if(!pet)throw new Error('這不是你的寵物');
+    const cs=ss.getSheetByName(SHEETS.CHALLENGES),ch=headerMap_(cs),period=challengePeriodKey_(new Date());
+    const record=readRowsWithPositionV600_(cs).find(r=>String(r['週期'])===period&&String(r['學號']).trim()===id&&String(r['科目'])===sub);
+    let wrong=Number(record?.['錯誤數']||0),correct=Number(record?.['答對數']||0),totalExp=Number(record?.['總EXP']||0),gainedTotal=0,processed=0;
+    const qMap={};cachedQuestionObjectsDisplay_().forEach(q=>qMap[String(q['題目ID'])]=q);
+    for(const answer of normalized){
+      if(wrong>=3)break;
+      const q=qMap[answer.questionId];if(!q||String(q['科目'])!==sub)continue;
+      if(normalizeAnswer_(answer.answer)===normalizeAnswer_(q['答案'])){correct++;const gained=challengeExpForCorrectCount_(correct);totalExp+=gained;gainedTotal+=gained;}
+      else wrong++;
+      processed++;
+    }
+    const result={ok:true,batchId:bid,processed,gained:gainedTotal,status:{correct,wrong,exp:totalExp,locked:wrong>=3},locked:wrong>=3,resetAt:nextResetText_()};
+    const rewards=ss.getSheetByName(SHEETS.REWARDS),rh=headerMap_(rewards);
+    // 先永久標記 SUBMITTED。結果不明時絕不盲目重送原子寫入。
+    appendObject_(rewards,{'時間':new Date(),'學號':id,'金幣變動':0,'EXP變動':0,'原因':'答題同步批次','答題批次ID':bid,'答題科目':sub,'答題寵物ID':pid,'答題內容':content,'答題交易狀態':'SUBMITTED','答題結果':''});SpreadsheetApp.flush();
+    const transaction=challengeBatchRecordsV600_(id,bid).find(r=>String(r['答題批次ID'])===bid);
+    if(!transaction)throw new Error('無法確認答題交易列，停止提交');
+    const requests=[],challengeRow=record?record._row:cs.getLastRow()+1;
+    if(!record){
+      if(challengeRow>cs.getMaxRows())requests.push({appendDimension:{sheetId:cs.getSheetId(),dimension:'ROWS',length:challengeRow-cs.getMaxRows()}});
+      for(const [key,value] of Object.entries({'週期':period,'學號':id,'科目':sub}))requests.push(mailCellRequestV600_(cs,challengeRow,ch[key],value));
+    }
+    for(const [key,value] of Object.entries({'答對數':correct,'錯誤數':wrong,'總EXP':totalExp,'寵物ID':pid,'最後更新':Utilities.formatDate(new Date(),TZ,'yyyy-MM-dd HH:mm:ss')}))requests.push(mailCellRequestV600_(cs,challengeRow,ch[key],value));
+    if(gainedTotal>0&&Number(pet['等級']||1)<30){
+      let level=Number(pet['等級']||1),exp=Number(pet['EXP']||0)+gainedTotal;
+      while(level<30&&exp>=expNeeded_(level)){exp-=expNeeded_(level);level++;}
+      if(level>=30)exp=0;if(exp<0)exp=0;
+      requests.push(mailCellRequestV600_(ps,pet._row,ph['等級'],level),mailCellRequestV600_(ps,pet._row,ph['EXP'],exp));
+    }
+    requests.push(mailCellRequestV600_(rewards,transaction._row,rh['EXP變動'],gainedTotal),mailCellRequestV600_(rewards,transaction._row,rh['答題結果'],JSON.stringify(result)),mailCellRequestV600_(rewards,transaction._row,rh['答題交易狀態'],'COMMITTED'));
+    Sheets.Spreadsheets.batchUpdate({requests},ss.getId());
+    return result;
+  }finally{lock.releaseLock();}
+}
 
 /** ====================== V5.10.5 對戰存檔 ====================== **/
 
@@ -2133,6 +2187,7 @@ function useExpItemsBatchV599(studentId,petId,uses){
   lock.waitLock(12000);
   try{
   const id=String(studentId||'').trim(),pid=String(petId||'').trim();
+  assertNoPendingChallengeBatchV600_(id,pid);
   const list=Array.isArray(uses)?uses:[];
   if(!list.length)throw new Error('沒有選擇經驗道具');
 
@@ -2341,6 +2396,7 @@ function setupOrUpgradeV600(){
       if(existing && (String(existing['類型'])!=='屬性石'||Number(existing['效果值'])!==Number(stone.increment)))throw new Error('道具 ID 已被其他設定使用：'+stone.itemId);
     });
     ensureSheet_(SHEETS.SKILL_ENHANCEMENTS,SKILL_ENHANCEMENT_HEADERS_V600);
+    ensureSheet_(SHEETS.REWARDS,['時間','學號','姓名','金幣變動','EXP變動','原因'].concat(CHALLENGE_BATCH_HEADERS_V600));
     ensureSheet_(SHEETS.MAILBOX,['信件ID','學號','時間','寄件者','標題','內容','附件類型','附件ID','附件數量','是否領取','領取交易']);
     const missing=ATTRIBUTE_STONES_V600.filter(s=>!rows.some(x=>String(x['道具ID'])===s.itemId));
     appendObjectsBatch_(items,missing.map(s=>({'道具ID':s.itemId,'名稱':s.name,'類型':'屬性石','效果值':Number(s.increment),'圖片':'','說明':'同屬性寵物的一個已解鎖技能永久增加 '+s.increment+' 傷害。','是否開放':true})));

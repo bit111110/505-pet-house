@@ -8,22 +8,22 @@ const backend=fs.readFileSync(path.join(root,'apps-script/Code.gs'),'utf8');
 const vm=require('node:vm');
 const oldBackend=execFileSync('git',['show','HEAD:apps-script/Code.gs'],{cwd:root,encoding:'utf8'});
 const oldContext=vm.createContext({}),newContext=vm.createContext({});vm.runInContext(oldBackend,oldContext);vm.runInContext(backend,newContext);
-for(const name of ['randomGift_','hourlyPetGiftV600_','setupOrUpgradeV600','syncChallengeBatch','getBattleProgressV5105','saveBattleProgressV5105','clearBattleProgressV5105'])assert.equal(newContext[name].toString().replace(/\r\n/g,'\n'),oldContext[name].toString().replace(/\r\n/g,'\n'),name+' unchanged');
+for(const name of ['randomGift_','hourlyPetGiftV600_','claimMailsLockedV600_','useAttributeStoneV600','getBattleProgressV5105','saveBattleProgressV5105','clearBattleProgressV5105'])assert.equal(newContext[name].toString().replace(/\r\n/g,'\n'),oldContext[name].toString().replace(/\r\n/g,'\n'),name+' unchanged');
 const output=process.env.BATTLE_SCREENSHOT_DIR;
 async function fixture(page){
  await page.route('**/*',async route=>{
    const url=new URL(route.request().url()),file=url.pathname==='/'?'index.html':decodeURIComponent(url.pathname).slice(1);
-   if(file==='config.js')return route.fulfill({contentType:'text/javascript',body:"window.API_URL='http://pet-house.test/mock-api';"});
+   if(file==='config.js')return route.fulfill({contentType:'text/javascript',body:"window.API_URL='https://pet-house.test/mock-api';"});
    if(!['index.html','app.js','style.css'].includes(file)&&!file.startsWith('assets/'))return route.abort();
    const resolved=path.resolve(root,file);if(!resolved.startsWith(root+path.sep)||!fs.existsSync(resolved))return route.abort();
    return route.fulfill({path:resolved});
  });
- await page.goto('http://pet-house.test/');
+ await page.goto('https://pet-house.test/');
  await page.evaluate(()=>{
    window.testCalls=[];window.alert=()=>{};window.confirm=()=>true;
    gsRaw=gs=async(action,...args)=>{
      testCalls.push({action,args});
-     if(action==='syncChallengeBatch')return {status:{...challenge.status}};
+     if(action==='syncChallengeBatch')return {ok:true,status:{...challenge.status}};
      if(action==='saveBattleProgressV5105')return {ok:true};
      if(action==='getBattleProgressV5105')return {exists:false};
      throw Error('unexpected API '+action);
@@ -91,7 +91,7 @@ async function run(){
    assert.deepEqual(await page.evaluate(()=>({subject:challenge.subject,petId:challenge.petId,no:challenge.monsterNo,hp:challenge.monsterHp,max:challenge.monsterMaxHp,seen:challenge.seen})),{subject:'數學',petId:'PET013',no:9,hp:432,max:777,seen:['Q1','Q2']});
    assert.equal(await page.evaluate(()=>challenge.questions.some(q=>['Q1','Q2'].includes(q.id))),false,'seen questions excluded');
    // Wrong answer at third error locks skills while preserving 30% damage and answer sync.
-   await page.evaluate(()=>{gs=gsRaw=async(action,...args)=>{testCalls.push({action,args});return action==='syncChallengeBatch'?{status:{...challenge.status}}:{ok:true};};challenge.status.wrong=2;useBattleSkill('ATTR-草-25');window.lockAnswer=sendBattleAnswer('B');});
+   await page.evaluate(()=>{gs=gsRaw=async(action,...args)=>{testCalls.push({action,args});return action==='syncChallengeBatch'?{ok:true,status:{...challenge.status}}:{ok:true};};challenge.status.wrong=2;useBattleSkill('ATTR-草-25');window.lockAnswer=sendBattleAnswer('B');});
    await page.evaluate(()=>lockAnswer);
    assert.equal(await page.evaluate(()=>challenge.status.wrong),3);assert.equal(await page.evaluate(()=>challenge.status.locked),true);
    assert.equal(await page.evaluate(()=>challenge.monsterHp),394,'wrong answer 30% of 125 rounds to 38');

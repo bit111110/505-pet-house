@@ -1,4 +1,4 @@
-const FRONTEND_BUILD='20261008-v600-phase3';
+const FRONTEND_BUILD='20261008-v600-batch-idempotent';
 const BUILTIN_LAND_BACKGROUNDS = {
   'LAND001': 'assets/maps/grassland.png',
   'LAND002': 'assets/maps/forest.png',
@@ -635,7 +635,7 @@ async function login(){
     if(!r){loginMsg.textContent='登入失敗：後端沒有回傳資料。';return;}
     if(!r.ok){loginMsg.textContent=r.message||'登入失敗';return;}
 
-    currentId=id;
+    currentId=id;challenge.pending=[];challenge.syncing=null;
     STUDENT_TOKEN_V600=String(r.authToken||'');
     hydrateLocalStudentCache();
 
@@ -1479,16 +1479,50 @@ async function loadMoreBattleQuestions(){
 }
 function challengeLocalExp(n){if(n>=50)return 6;if(n>=40)return 5;if(n>=30)return 4;if(n>=20)return 3;if(n>=10)return 2;return 1;}
 function normAns(v){return String(v??'').trim().toUpperCase().replace(/\s+/g,'');}
+function challengeBatchStoragePrefixV600_(studentId){return 'petHouseChallengeBatchV600:'+encodeURIComponent(studentId)+':';}
+function queuedChallengeBatchesV600_(studentId){
+  const prefix=challengeBatchStoragePrefixV600_(studentId),batches=[];
+  for(let i=0;i<localStorage.length;i++){
+    const key=localStorage.key(i);if(!key?.startsWith(prefix))continue;
+    const batch=JSON.parse(localStorage.getItem(key));
+    if(batch?.studentId!==studentId||!batch.batchId||!Array.isArray(batch.answers))throw new Error('待同步答題紀錄無效，請保留紀錄並請老師協助');
+    batches.push({...batch,storageKey:key});
+  }
+  return batches.sort((a,b)=>a.createdAt-b.createdAt||a.batchId.localeCompare(b.batchId));
+}
+function captureChallengeBatchV600_(studentId){
+  if(currentId!==studentId||!challenge.pending?.length||!challenge.subject||!challenge.petId)return;
+  const answers=challenge.pending.slice(0,100),batchId=crypto.randomUUID();
+  const createdAt=Math.max(Date.now(),...queuedChallengeBatchesV600_(studentId).map(b=>Number(b.createdAt||0)+1));
+  const batch={studentId,subject:challenge.subject,petId:challenge.petId,answers,batchId,createdAt};
+  // 每批獨立 storage key，兩個分頁的保存與刪除不會互相覆蓋。
+  localStorage.setItem(challengeBatchStoragePrefixV600_(studentId)+batchId,JSON.stringify(batch));
+  challenge.pending.splice(0,answers.length);
+}
 async function flushChallengeAnswers(force){
-  if(challenge.syncing){if(force)await challenge.syncing;else return;}
-  if(!challenge.pending.length)return;
-  const batch=challenge.pending.splice(0,challenge.pending.length);
-  const syncCall=force?gs('syncChallengeBatch',currentId,challenge.subject,challenge.petId,batch):gsRaw('syncChallengeBatch',currentId,challenge.subject,challenge.petId,batch);
-  challenge.syncing=syncCall
-    .then(r=>{if(r?.status){challenge.status={...r.status};state.challengeStatus=state.challengeStatus||{};state.challengeStatus[challenge.subject]={...r.status};if(CHALLENGE_HOME_META?.status)CHALLENGE_HOME_META.status[challenge.subject]={...r.status};}return r;})
-    .catch(e=>{challenge.pending.unshift(...batch);if(force)throw e;})
-    .finally(()=>challenge.syncing=null);
-  if(force)return await challenge.syncing;
+  if(challenge.syncing){if(!force)return;await challenge.syncing;}
+  const studentId=currentId;if(!studentId)return;
+  let job;
+  job=(async()=>{
+    while(currentId===studentId){
+      captureChallengeBatchV600_(studentId);
+      const batch=queuedChallengeBatchesV600_(studentId)[0];if(!batch)return;
+      const args=[studentId,batch.subject,batch.petId,batch.answers,batch.batchId];
+      const result=await (force?gs('syncChallengeBatch',...args):gsRaw('syncChallengeBatch',...args));
+      if(!result?.ok)throw new Error(result?.message||'答題同步未確認成功');
+      // 只有確實收到成功才刪除；timeout 時原 ID／原內容留待重送。
+      localStorage.removeItem(batch.storageKey);
+      if(currentId!==studentId||!state)return;
+      if(result.status){
+        state.challengeStatus=state.challengeStatus||{};state.challengeStatus[batch.subject]={...result.status};
+        if(CHALLENGE_HOME_META?.status)CHALLENGE_HOME_META.status[batch.subject]={...result.status};
+        const queuedCurrent=queuedChallengeBatchesV600_(studentId).some(b=>b.subject===challenge.subject&&String(b.petId)===String(challenge.petId));
+        if(challenge.subject===batch.subject&&String(challenge.petId)===String(batch.petId)&&((!challenge.pending.length&&!queuedCurrent)||result.status.locked))challenge.status={...result.status};
+      }
+    }
+  })().catch(e=>{if(force)throw e;console.warn('答題批次保留待重試',e.message||e);}).finally(()=>{if(challenge.syncing===job)challenge.syncing=null;});
+  challenge.syncing=job;
+  if(force)return await job;
 }
 
 async function saveBattleAndExitV5105(btn){
