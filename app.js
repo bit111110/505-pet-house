@@ -298,7 +298,8 @@ function loadLocal(kind,maxAge=LOCAL_TTL){
 function hydrateLocalStudentCache(){
   const m=loadLocal('mailbox');
   if(Array.isArray(m)){mailbox=m;mailboxLoaded=true;mailboxAt=Date.now();}
-  const inv=loadLocal('inventory');
+  const cachedInv=loadLocal('inventory');
+  const inv=Array.isArray(cachedInv)?cachedInv:cachedInv?.inventory;
   if(Array.isArray(inv)){inventory=inv;CLIENT_CACHE.inventory=inv;CLIENT_CACHE.inventoryAt=Date.now();}
   const sh=loadLocal('shop');
   if(sh){shop=sh;CLIENT_CACHE.shop=sh;CLIENT_CACHE.shopAt=Date.now();}
@@ -334,7 +335,7 @@ function localQuestionBatch(subject,excludeIds=[],limit=30){
   if(!pool.length)pool=[...src];
   return shuffleCopy(pool).slice(0,Math.max(1,limit));
 }
-function questionCacheKey(subject){return 'petHouseQuestionV5101:'+String(subject||'');}
+function questionCacheKey(subject){return 'petHouseQuestionV5106Display:'+String(subject||'');}
 function readQuestionBrowserCache(subject){
   try{
     const x=JSON.parse(localStorage.getItem(questionCacheKey(subject))||'null');
@@ -381,9 +382,9 @@ async function hydrateAfterLoginV596(){
         const r=bundle.runtime;
         if(Array.isArray(r.inventory)){
           inventory=r.inventory;
-          CLIENT_CACHE.inventory=r;
+          CLIENT_CACHE.inventory=inventory;
           CLIENT_CACHE.inventoryAt=Date.now();
-          saveLocal('inventory',r);
+          saveLocal('inventory',inventory);
         }
       }
 
@@ -568,7 +569,7 @@ async function prefetchStudentData(){
       mailbox=r.mailbox;mailboxLoaded=true;mailboxAt=Date.now();saveLocal('mailbox',mailbox);
     }
     if(Array.isArray(r?.inventory)){
-      inventory=r.inventory;CLIENT_CACHE.inventory=r;CLIENT_CACHE.inventoryAt=Date.now();saveLocal('inventory',r);
+      inventory=r.inventory;CLIENT_CACHE.inventory=inventory;CLIENT_CACHE.inventoryAt=Date.now();saveLocal('inventory',inventory);
     }
     if(Array.isArray(r?.backgrounds)){
       LIVE_LAND_CONFIGS=Object.fromEntries(r.backgrounds.map(x=>[String(x.landId),x]));
@@ -961,7 +962,7 @@ function renderHome(){
     <h4>目前土地上的寵物</h4>${petsHere.map(p=>petCardHtml(p)).join('')||'<div class="petcard">目前這塊土地沒有寵物。</div>'}
 `;
 }
-function petCardHtml(p){const pct=Math.min(100,p.exp/p.expNeed*100);return `<div class="petcard"><b>${esc(p.nickname||p.name)}</b> <span class="small">${esc(p.movementType)}</span><br>Lv.${p.level}・第${p.stage}階<div class="xp"><div style="width:${pct}%"></div></div><small>EXP ${p.exp}/${p.expNeed}</small></div>`;}
+function petCardHtml(p){const maxed=Number(p.expNeed)===0;const pct=maxed?100:Math.min(100,p.exp/p.expNeed*100);return `<div class="petcard"><b>${esc(p.nickname||p.name)}</b> <span class="small">${esc(p.movementType)}</span><br>Lv.${p.level}・第${p.stage}階<div class="xp"><div style="width:${pct}%"></div></div><small>${maxed?'EXP MAX':`EXP ${p.exp}/${p.expNeed}`}</small></div>`;}
 async function changeLand(id){try{const r=await gs('setActiveLandFast',currentId,id);state.activeLandId=r.activeLandId;state.furniture=Array.isArray(r.furniture)?r.furniture:[];renderYard();renderHome();}catch(e){alert(e.message||e);}}
 async function movePetUI(petId){const sel=document.getElementById('plot-'+petId);if(!sel)return;try{await gs('movePetToLand',currentId,petId,sel.value);const p=state.pets.find(x=>x.petId===petId);if(p)p.landId=sel.value;renderYard();renderHome();}catch(e){alert(e.message||e);}}
 async function applyHomeBackground(){const bg=document.getElementById('homeBg')?.value;if(!bg)return;await useBackgroundFromShop(bg);}
@@ -1032,7 +1033,7 @@ async function useExpBatch(btn){
     const r=await gsRaw('useExpItemsBatchV599',currentId,petId,uses);
     inventory=Array.isArray(r.inventory)?r.inventory:inventory;
     const p=state.pets.find(x=>x.petId===petId);
-    if(p){p.level=Number(r.level||p.level);p.exp=Number(r.exp??p.exp);p.stage=Number(r.stage||p.stage);p.expNeed=Number(r.expNeed||p.expNeed);p.image=getPetImage(p.petId,p.stage)||r.image||p.image;}
+    if(p){p.level=Number(r.level||p.level);p.exp=Number(r.exp??p.exp);p.stage=Number(r.stage||p.stage);p.expNeed=Number(r.expNeed??p.expNeed);p.image=getPetImage(p.petId,p.stage)||r.image||p.image;}
     await renderUpgrade();renderYard();
     const note=document.createElement('div');note.className='success';note.textContent=`✅ 批量使用完成，共 +${r.gained} EXP`;panel.prepend(note);setTimeout(()=>note.remove(),1800);
   }catch(e){
@@ -1051,7 +1052,7 @@ async function useExp(itemId,btn){
     const r=await gsRaw('useExpItem',currentId,itemId,petId,qty);
     inventory=Array.isArray(r.inventory)?r.inventory:inventory;
     const p=state.pets.find(x=>x.petId===petId);
-    if(p){p.level=Number(r.level||p.level);p.exp=Number(r.exp??p.exp);p.stage=Number(r.stage||p.stage);p.expNeed=Number(r.expNeed||p.expNeed);p.image=getPetImage(p.petId,p.stage)||r.image||p.image;}
+    if(p){p.level=Number(r.level||p.level);p.exp=Number(r.exp??p.exp);p.stage=Number(r.stage||p.stage);p.expNeed=Number(r.expNeed??p.expNeed);p.image=getPetImage(p.petId,p.stage)||r.image||p.image;}
     await renderUpgrade();renderYard();
     const note=document.createElement('div');note.className='success';note.textContent=`✅ +${r.gained} EXP`;panel.prepend(note);setTimeout(()=>note.remove(),1400);
   }catch(e){
@@ -1332,20 +1333,6 @@ async function loadMoreBattleQuestions(){
 }
 function challengeLocalExp(n){if(n>=50)return 6;if(n>=40)return 5;if(n>=30)return 4;if(n>=20)return 3;if(n>=10)return 2;return 1;}
 function normAns(v){return String(v??'').trim().toUpperCase().replace(/\s+/g,'');}
-async function sendAnswer(ans){
-  const q=challenge.question;if(!q)return;
-  const good=normAns(ans)===normAns(q.answer);
-  let gained=0;
-  if(good){challenge.status.correct=Number(challenge.status.correct||0)+1;gained=challengeLocalExp(challenge.status.correct);challenge.status.exp=Number(challenge.status.exp||0)+gained;}
-  else challenge.status.wrong=Number(challenge.status.wrong||0)+1;
-  challenge.pending.push({questionId:q.id,answer:ans});challenge.seen.push(q.id);
-  const msg=good?`<span class="success">✅ 正確！+${gained} EXP</span>`:`<span class="wrong">❌ 錯誤。正確答案：${formatMathText(q.answer)}<br>${formatMathText(q.explanation||'')}</span>`;
-  if(challenge.status.wrong>=3){await flushChallengeAnswers(true);panel.innerHTML=`<div class="qbox"><h3>今日挑戰結束</h3>${msg}<p>答對：${challenge.status.correct} 題</p><p>累積 EXP：${challenge.status.exp}</p><p>明早 7:00 後重置。</p><button class="btn gray" onclick="refreshState().then(()=>renderChallengeHome())">返回</button></div>`;return;}
-  challenge.qIndex++;
-  if(challenge.qIndex>=challenge.questions.length){challenge.question=null;renderQuestion(challenge.status,msg);}
-  else{challenge.question=challenge.questions[challenge.qIndex];renderQuestion(challenge.status,msg);}
-  if(challenge.pending.length>=12)flushChallengeAnswers(false);
-}
 async function flushChallengeAnswers(force){
   if(challenge.syncing){if(force)await challenge.syncing;else return;}
   if(!challenge.pending.length)return;
@@ -1356,13 +1343,6 @@ async function flushChallengeAnswers(force){
     .catch(e=>{challenge.pending.unshift(...batch);if(force)throw e;})
     .finally(()=>challenge.syncing=null);
   if(force)return await challenge.syncing;
-}
-async function loadMoreChallengeQuestions(){
-  try{
-    let qs=localQuestionBatch(challenge.subject,challenge.seen.slice(-80),30);
-    if(!qs.length){await ensureQuestionBank(challenge.subject);qs=localQuestionBatch(challenge.subject,challenge.seen.slice(-80),30);}
-    challenge.questions=qs||[];challenge.qIndex=0;challenge.question=challenge.questions[0]||null;renderQuestion(challenge.status);
-  }catch(e){alert(e.message||e);}
 }
 
 async function saveBattleAndExitV5105(btn){
@@ -1418,6 +1398,19 @@ async function finishChallengeUI(){
     renderBattleMain();
     renderChallengeHome();
   }catch(e){alert(e.message||e);}
+}
+function showLocked(result){
+  const status=result?.status||{correct:0,wrong:3,exp:0,locked:true};
+  if(state && challenge.subject){
+    state.challengeStatus=state.challengeStatus||{};
+    state.challengeStatus[challenge.subject]={...status,locked:true};
+  }
+  challenge.question=null;challenge.selectedSkill=null;
+  panel.innerHTML=`<div class="qbox"><h3>今日對戰已結束</h3><p>答對：${Number(status.correct||0)} 題</p><p>累積 EXP：${Number(status.exp||0)}</p><p>${esc(result?.resetAt||'明早 7:00')} 後重置。</p><button class="btn gray" onclick="renderChallengeHome()">返回</button></div>`;
+}
+async function renderMail(){
+  renderMailFromCache();
+  if(!mailboxLoaded || !cacheFresh(mailboxAt,60000))await refreshMailboxInBackground(true);
 }
 function renderMailFromCache(){
   const unclaimed=mailbox.filter(m=>!(m['是否領取']===true||String(m['是否領取']).toUpperCase()==='TRUE')).length;
@@ -1506,7 +1499,7 @@ async function redeemBackgroundUI(id){
   if(!ex.itemId||ex.qty<=0){alert('這張背景尚未設定兌換寶物與數量。');return;}
   if(inventoryQty(ex.itemId)<ex.qty){alert(`寶物不足，需要 ${ex.itemName} ×${ex.qty}`);return;}
   if(!confirm(`使用 ${ex.itemName} ×${ex.qty} 兌換「${bg['名稱']}」嗎？`))return;
-  beginPurchaseBusy('兌換中');
+  if(!showPurchaseBusy('兌換中'))return;
   try{
     const r=await gs('redeemBackgroundFast',currentId,id);
     state.backgrounds=Array.isArray(r.backgrounds)?r.backgrounds:state.backgrounds;
@@ -1514,7 +1507,7 @@ async function redeemBackgroundUI(id){
     CLIENT_CACHE.inventory=inventory;CLIENT_CACHE.inventoryAt=Date.now();saveLocal('inventory',inventory);
     await renderShop();
   }catch(e){alert(e.message||e);}
-  finally{endPurchaseBusy();}
+  finally{hidePurchaseBusy();}
 }
 
 async function renderShop(forceSync=false){
@@ -1611,14 +1604,14 @@ async function buyBackgroundUI(id){
     return;
   }
   if(!confirm(`確定花費 ${ex.coinPrice} 金幣購買「${bg['名稱']}」嗎？`))return;
-  beginPurchaseBusy('購買中');
+  if(!showPurchaseBusy('購買中'))return;
   try{
     const r=await gs('buyBackgroundFast',currentId,id);
     state.backgrounds=Array.isArray(r.backgrounds)?r.backgrounds:state.backgrounds;
     if(r.coins!==undefined){state.student.coins=r.coins;coins.textContent=r.coins;}
     await renderShop();
   }catch(e){alert(e.message||e);}
-  finally{endPurchaseBusy();}
+  finally{hidePurchaseBusy();}
 }
 async function useBackgroundFromShop(id){
   const plot=state.lands.find(l=>String(l['土地ID'])===String(state.activeLandId));

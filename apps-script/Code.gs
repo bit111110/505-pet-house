@@ -4,7 +4,7 @@
  * Google Apps Script + Google 試算表
  */
 
-const APP_VERSION='V5.9.6';
+const APP_VERSION='V5.10.6';
 const TZ = 'Asia/Taipei';
 
 const SHEETS = {
@@ -24,6 +24,7 @@ const SHEETS = {
   MAILBOX: '信箱',
   QUESTIONS: '挑戰題庫',
   CHALLENGES: '挑戰紀錄',
+  BATTLE_SAVES: '對戰存檔',
   STUDENT_PLOTS: '學生土地格',
   STUDENT_BACKGROUNDS: '學生背景'
 };
@@ -35,7 +36,7 @@ const STAGE1_FOLDER_ID = '12J1m_ERknyuvTEYqtw2-tdpy2oU0wwFs';
 const STAGE2_FOLDER_ID = '1OoOsmcvHpz3iDtyIpN7U7xNRAotuN9E2';
 const STAGE3_FOLDER_ID = '14CO9SiK-VJO06B11VXBQUOgbWKxwyGYf';
 
-function doGet(e) { return apiJson_({apiOk:true,message:'PetHouse API V5.5 is alive'}); }
+function doGet(e) { return apiJson_({apiOk:true,message:'PetHouse API V5.9.8 is alive'}); }
 
 function getAppVersion(){ return APP_VERSION; }
 
@@ -255,6 +256,8 @@ function clearGameConfigCache(){
   const c=CacheService.getScriptCache();
   [SHEETS.PET_CONFIG,SHEETS.LANDS,SHEETS.FURNITURE,SHEETS.ITEM_CONFIG,SHEETS.QUESTIONS].forEach(n=>c.remove('CFG_'+n));
   ['FAST_BG_CATALOG','FAST_MONSTER_CATALOG'].forEach(k=>c.remove(k));
+  ['QUESTION_DISPLAY_V5106_STABILITY','QUESTION_BANK_V5106_DISPLAY'].forEach(k=>c.remove(k));
+  ['國語','數學','英文','自然','社會'].forEach(s=>c.remove('QUESTION_SUBJECT_V5106_DISPLAY:'+s));
   return true;
 }
 function cachedMap_(sheetName,keyCol,ttlSec){
@@ -339,7 +342,7 @@ function decoratePet_(p,cfg){
   const stage=level>=l3?3:(level>=l2?2:1);
   const image=stage===3?cfg['第三階圖片']:(stage===2?cfg['第二階圖片']:cfg['第一階圖片']);
   return {
-    petId:String(p['寵物ID']),name:cfg['名稱']||p['寵物ID'],nickname:p['暱稱']||'',level,exp,expNeed:expNeeded_(level),stage,
+    petId:String(p['寵物ID']),name:cfg['名稱']||p['寵物ID'],nickname:p['暱稱']||'',level,exp,expNeed:level>=30?0:expNeeded_(level),stage,
     landId:String(p['土地ID']||'LAND001'),x:Number(p['X']||45),y:Number(p['Y']||70),image:image||'',
     movementType:String(cfg['移動類型']||'地面型'),
     attribute:String(cfg['屬性']||'光'),
@@ -354,11 +357,14 @@ function addPetExp_(studentId,petId,amount){
   for(let i=1;i<vals.length;i++){
     if(String(vals[i][hm['學號']-1]).trim()===String(studentId).trim() && String(vals[i][hm['寵物ID']-1])===String(petId)){
       let lv=Number(vals[i][hm['等級']-1]||1), exp=Number(vals[i][hm['EXP']-1]||0)+Number(amount||0);
-      while(exp>=expNeeded_(lv)){ exp-=expNeeded_(lv); lv++; }
+      // 保留既有超過上限的資料，不降級或重設；新的 EXP 最多升至 30 級。
+      if(lv>=30)return {level:lv,exp:Number(vals[i][hm['EXP']-1]||0),expNeed:0};
+      while(lv<30 && exp>=expNeeded_(lv)){ exp-=expNeeded_(lv); lv++; }
+      if(lv>=30)exp=0;
       if(exp<0) exp=0;
       sh.getRange(i+1,hm['等級']).setValue(lv);
       sh.getRange(i+1,hm['EXP']).setValue(exp);
-      return {level:lv,exp,expNeed:expNeeded_(lv)};
+      return {level:lv,exp,expNeed:lv>=30?0:expNeeded_(lv)};
     }
   }
   throw new Error('找不到寵物');
@@ -391,17 +397,8 @@ function addItem_(studentId,itemId,qty){
 }
 
 function useExpItem(studentId,itemId,petId,quantity){
-  const id=String(studentId).trim(), qty=Math.max(1,Number(quantity||1));
-  const cfg=cachedObjects_(SHEETS.ITEM_CONFIG,300).find(x=>String(x['道具ID'])===String(itemId));
-  if(!cfg || String(cfg['類型'])!=='經驗型') throw new Error('這不是經驗型道具');
-  const sh=SpreadsheetApp.getActive().getSheetByName(SHEETS.STUDENT_ITEMS), hm=headerMap_(sh), vals=sh.getDataRange().getValues();
-  let row=-1, have=0;
-  for(let i=1;i<vals.length;i++) if(String(vals[i][hm['學號']-1]).trim()===id && String(vals[i][hm['道具ID']-1])===String(itemId)){ row=i+1; have=Number(vals[i][hm['數量']-1]||0); break; }
-  if(row<0 || have<qty) throw new Error('道具數量不足');
-  sh.getRange(row,hm['數量']).setValue(have-qty);
-  const gained=Number(cfg['效果值']||0)*qty;
-  const pet=addPetExp_(id,petId,gained);
-  return {ok:true,gained,...pet,inventory:getInventory(id)};
+  // 共用既有批量升級流程，保持 API 相容，統一鎖、階段、圖片與滿級規則。
+  return useExpItemsBatchV599(studentId,petId,[{itemId:itemId,quantity:quantity}]);
 }
 
 /** 信箱與整點禮物 */
@@ -511,7 +508,7 @@ function answerChallenge(studentId,subject,petId,questionId,answer){
   let totalExp=Number(rec.sheet.getRange(rec.row,rec.hm['總EXP']).getValue()||0);
   if(wrong>=3) return {ok:false,locked:true,resetAt:nextResetText_(),status:{correct,wrong,exp:totalExp}};
 
-  const qrow=cachedObjects_(SHEETS.QUESTIONS,300).find(x=>String(x['題目ID'])===String(questionId));
+  const qrow=cachedQuestionObjectsDisplay_().find(x=>String(x['題目ID'])===String(questionId));
   if(!qrow || String(qrow['科目'])!==String(subject)) throw new Error('題目無效');
   const expected=normalizeAnswer_(qrow['答案']);
   const actual=normalizeAnswer_(answer);
@@ -575,7 +572,7 @@ function resolveQuestionImage_(x){
 }
 
 function getRandomQuestion_(subject,lastId){
-  let q=cachedObjects_(SHEETS.QUESTIONS,300).filter(x=>String(x['科目'])===String(subject) && x['是否啟用']!==false && String(x['是否啟用']).toUpperCase()!=='FALSE');
+  let q=cachedQuestionObjectsDisplay_().filter(x=>String(x['科目'])===String(subject) && questionEnabled_(x));
   if(!q.length) return null;
   if(q.length>1) q=q.filter(x=>String(x['題目ID'])!==String(lastId));
   const x=q[Math.floor(Math.random()*q.length)];
@@ -721,7 +718,7 @@ function buyLandFast(studentId,landId){
 function getChallengeQuestionBatch(subject, excludeIds, limit){
   limit=Math.max(5,Math.min(50,Number(limit||30)));
   const ex=new Set((excludeIds||[]).map(String));
-  let rows=cachedObjects_(SHEETS.QUESTIONS,300).filter(x=>String(x['科目'])===String(subject) && x['是否啟用']!==false && String(x['是否啟用']).toUpperCase()!=='FALSE');
+  let rows=cachedQuestionObjectsDisplay_().filter(x=>String(x['科目'])===String(subject) && questionEnabled_(x));
   if(rows.length>1){ const filtered=rows.filter(x=>!ex.has(String(x['題目ID']))); if(filtered.length) rows=filtered; }
   // 洗牌
   for(let i=rows.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[rows[i],rows[j]]=[rows[j],rows[i]];}
@@ -751,7 +748,7 @@ function syncChallengeBatch(studentId,subject,petId,answers){
   let wrong=Number(rec.sheet.getRange(rec.row,rec.hm['錯誤數']).getValue()||0);
   let correct=Number(rec.sheet.getRange(rec.row,rec.hm['答對數']).getValue()||0);
   let totalExp=Number(rec.sheet.getRange(rec.row,rec.hm['總EXP']).getValue()||0);
-  const qMap={}; cachedObjects_(SHEETS.QUESTIONS,300).forEach(x=>qMap[String(x['題目ID'])]=x);
+  const qMap={}; cachedQuestionObjectsDisplay_().forEach(x=>qMap[String(x['題目ID'])]=x);
   let gainedTotal=0, processed=0;
   for(const a of (answers||[])){
     if(wrong>=3) break;
@@ -768,6 +765,93 @@ function syncChallengeBatch(studentId,subject,petId,answers){
   rec.sheet.getRange(rec.row,rec.hm['寵物ID']).setValue(petId);
   rec.sheet.getRange(rec.row,rec.hm['最後更新']).setValue(new Date());
   return {ok:true,processed,gained:gainedTotal,status:{correct,wrong,exp:totalExp,locked:wrong>=3},locked:wrong>=3,resetAt:nextResetText_()};
+}
+
+
+/** ====================== V5.10.5 對戰存檔 ====================== **/
+
+function getBattleProgressV5105(studentId,subject){
+  const id=String(studentId||'').trim(), sub=String(subject||'').trim();
+  if(!id || !sub)return null;
+  const sh=SpreadsheetApp.getActive().getSheetByName(SHEETS.BATTLE_SAVES);
+  if(!sh || sh.getLastRow()<2)return null;
+  const hm=headerMap_(sh), vals=sh.getDataRange().getValues();
+  for(let i=1;i<vals.length;i++){
+    if(String(vals[i][hm['學號']-1]).trim()===id && String(vals[i][hm['科目']-1]).trim()===sub){
+      let seen=[];
+      try{seen=JSON.parse(String(vals[i][hm['已看題目']-1]||'[]'));}catch(e){}
+      return safeForClient_({
+        exists:true,
+        subject:sub,
+        petId:String(vals[i][hm['寵物ID']-1]||''),
+        monsterNo:Math.max(1,Number(vals[i][hm['怪物編號']-1]||1)),
+        monsterHp:Math.max(0,Number(vals[i][hm['怪物HP']-1]||0)),
+        monsterMaxHp:Math.max(1,Number(vals[i][hm['怪物最大HP']-1]||1)),
+        seen:Array.isArray(seen)?seen.slice(-80):[],
+        updatedAt:vals[i][hm['最後更新']-1]||''
+      });
+    }
+  }
+  return null;
+}
+
+function saveBattleProgressV5105(studentId,payload){
+  const lock=LockService.getScriptLock();
+  lock.waitLock(12000);
+  try{
+    const id=String(studentId||'').trim();
+    const p=payload||{};
+    const sub=String(p.subject||'').trim();
+    const petId=String(p.petId||'').trim();
+    if(!id || !sub || !petId)throw new Error('對戰存檔資料不完整');
+    validatePetOwnership_(id,petId);
+
+    const sh=SpreadsheetApp.getActive().getSheetByName(SHEETS.BATTLE_SAVES);
+    if(!sh)throw new Error('找不到對戰存檔工作表，請先執行 setupOrUpgradeV5105()');
+    const hm=headerMap_(sh), vals=sh.getDataRange().getValues();
+    let row=0;
+    for(let i=1;i<vals.length;i++){
+      if(String(vals[i][hm['學號']-1]).trim()===id && String(vals[i][hm['科目']-1]).trim()===sub){
+        row=i+1;break;
+      }
+    }
+    const seen=Array.isArray(p.seen)?p.seen.map(String).slice(-80):[];
+    const data={
+      '學號':id,'科目':sub,'寵物ID':petId,
+      '怪物編號':Math.max(1,Number(p.monsterNo||1)),
+      '怪物HP':Math.max(0,Number(p.monsterHp||0)),
+      '怪物最大HP':Math.max(1,Number(p.monsterMaxHp||1)),
+      '已看題目':JSON.stringify(seen),
+      '最後更新':new Date()
+    };
+    if(row){
+      Object.keys(data).forEach(k=>{if(hm[k])sh.getRange(row,hm[k]).setValue(data[k]);});
+    }else{
+      appendObject_(sh,data);
+    }
+    return {ok:true,save:getBattleProgressV5105(id,sub)};
+  }finally{
+    lock.releaseLock();
+  }
+}
+
+function clearBattleProgressV5105(studentId,subject){
+  const lock=LockService.getScriptLock();
+  lock.waitLock(12000);
+  try{
+    const id=String(studentId||'').trim(), sub=String(subject||'').trim();
+    const sh=SpreadsheetApp.getActive().getSheetByName(SHEETS.BATTLE_SAVES);
+    if(!sh || sh.getLastRow()<2)return {ok:true};
+    const hm=headerMap_(sh), vals=sh.getDataRange().getValues();
+    for(let i=vals.length-1;i>=1;i--){
+      if(String(vals[i][hm['學號']-1]).trim()===id && String(vals[i][hm['科目']-1]).trim()===sub){
+        sh.deleteRow(i+1);
+      }
+    }
+    return {ok:true};
+  }finally{
+    lock.releaseLock();
+  }
 }
 
 /** 老師後台 */
@@ -1113,7 +1197,15 @@ function getStudentCoreStateV55_(studentId){
   const fMap=cachedMap_(SHEETS.FURNITURE,'家具ID',300);const furniture=readObjects_(ss.getSheetByName(SHEETS.STUDENT_FURNITURE)).filter(x=>String(x['學號']).trim()===id&&String(x['土地ID']||'SLOT001')===activeLandId).map(x=>({...x,config:fMap[String(x['家具ID'])]||{}}));
   return safeForClient_({ok:true,version:APP_VERSION,student,pets,lands,backgrounds,activeLandId,furniture,unreadMail:0,challengeStatus:{}});
 }
-function getStudentStateV55(studentId){const s=getStudentCoreStateV55_(studentId);if(!s.ok)return s;s.mailbox=getMailbox(studentId);s.inventory=getInventory(studentId);return safeForClient_(s);}
+function getStudentStateV55(studentId){
+  const s=getStudentCoreStateV55_(studentId);if(!s.ok)return s;
+  s.mailbox=getMailbox(studentId);
+  s.inventory=getInventory(studentId);
+  s.challengeStatus=getAllChallengeStatusFastV596(studentId);
+  // 信箱只回傳最近 100 封；未領總數必須以完整信箱計數。
+  s.unreadMail=getUnreadMailCountFast_(studentId);
+  return safeForClient_(s);
+}
 function setActivePlotFastV55(studentId,slotId){
   const id=String(studentId).trim(),sh=SpreadsheetApp.getActive().getSheetByName(SHEETS.STUDENT_PLOTS);
   const hm=headerMapFast_(sh),vals=sh.getDataRange().getValues();
@@ -1166,7 +1258,7 @@ function buyBackgroundFast(studentId,bgId){
     const already=bgRows.some(x=>String(x['學號']).trim()===id&&String(x['背景ID'])===String(bgId)&&x['是否擁有']!==false);
     if(already){
       const s=getStudent_(id);
-      return {ok:true,alreadyOwned:true,coins:Number(s?.['金幣']||0),backgrounds:bgRows.filter(x=>String(x['學號']).trim()===id&&x['是否擁有']!==false).map(x=>String(x['背景ID']))};
+      return {ok:true,alreadyOwned:true,coins:Number(s?.coins||0),backgrounds:bgRows.filter(x=>String(x['學號']).trim()===id&&x['是否擁有']!==false).map(x=>String(x['背景ID']))};
     }
 
     const stuSh=ss.getSheetByName(SHEETS.STUDENTS),hm=headerMap_(stuSh),vals=stuSh.getDataRange().getValues();
@@ -1536,41 +1628,100 @@ function getPetBattleConfigFast(){
 
 /** ======================== V5.9.6 HIGH SPEED ======================== */
 
+
+/**
+ * V5.10.4 固定學生登入名單
+ * 只在這裡驗證「學號 + 生日(月/日)」，登入時不再掃描「學生資料」工作表。
+ * 若日後學生帳號或生日有變動，直接修改這裡即可。
+ */
+const STATIC_STUDENT_LOGIN_V5104 = Object.freeze({
+  '50501':'09/08','50502':'10/13','50503':'10/16','50504':'10/23','50505':'11/09',
+  '50506':'12/01','50507':'01/25','50508':'02/11','50509':'02/12','50510':'02/25',
+  '50511':'03/02','50512':'03/12','50513':'04/11','50514':'05/28','50515':'09/06',
+  '50516':'09/26','50517':'10/17','50518':'11/02','50519':'02/22','50520':'03/03',
+  '50522':'03/21','50523':'04/07','50524':'07/01','50525':'06/03','50526':'02/06'
+});
+
 /** 快速登入：只驗證學生，不讀寵物/土地/信箱/題庫。 */
 function loginFastV596(studentId,birthdayMD){
-  const id=String(studentId||'').trim(), wanted=normalizeMonthDay_(birthdayMD);
-  const c=CacheService.getScriptCache(), key='AUTH_STUDENTS_V596';
-  let rows=null, hit=c.get(key);
-  if(hit){try{rows=JSON.parse(hit);}catch(e){}}
-  if(!rows){
-    const sh=SpreadsheetApp.getActive().getSheetByName(SHEETS.STUDENTS),hm=headerMapFast_(sh),vals=sh.getDataRange().getValues();
-    rows=[];
-    for(let i=1;i<vals.length;i++){
-      rows.push({
-        id:String(vals[i][hm['學號']-1]||'').trim(),
-        name:String(vals[i][hm['姓名']-1]||''),
-        birthday:normalizeMonthDay_(vals[i][hm['生日']-1]),
-        enabled:vals[i][hm['是否啟用']-1]!==false,
-        coins:Number(vals[i][hm['金幣']-1]||0)
-      });
-    }
-    try{c.put(key,JSON.stringify(rows),600);}catch(e){}
+  const id=String(studentId||'').trim();
+  const wanted=normalizeMonthDay_(birthdayMD);
+  const expected=STATIC_STUDENT_LOGIN_V5104[id]||'';
+  if(!expected || wanted!==expected){
+    return {ok:false,message:'學號或生日（月/日）不正確'};
   }
-  const s=rows.find(x=>x.id===id && x.birthday===wanted && x.enabled);
-  if(!s)return {ok:false,message:'學號或生日（月/日）不正確'};
   return safeForClient_({
-    ok:true,name:s.name,coins:s.coins,version:APP_VERSION,
-    state:{ok:true,version:APP_VERSION,student:{id:id,name:s.name,coins:s.coins},pets:[],lands:[],backgrounds:[],activeLandId:'',furniture:[],unreadMail:0,challengeStatus:{}}
+    ok:true,name:id,coins:0,version:APP_VERSION,
+    state:{
+      ok:true,version:APP_VERSION,
+      student:{id:id,name:id,coins:0},
+      pets:[],lands:[],backgrounds:[],activeLandId:'',furniture:[],
+      unreadMail:0,challengeStatus:{}
+    }
   });
 }
 
 /** 題庫一次轉成五科 JSON，CacheService 10 分鐘。 */
+function readQuestionObjectsDisplay_(){
+  const sh=SpreadsheetApp.getActive().getSheetByName(SHEETS.QUESTIONS);
+  if(!sh)return [];
+  const vals=sh.getDataRange().getDisplayValues();
+  if(!vals.length)return [];
+  const headers=vals[0].map(h=>String(h).trim());
+  const out=[];
+  for(let r=1;r<vals.length;r++){
+    if(!vals[r].some(v=>String(v).trim()!==''))continue;
+    const o={};
+    headers.forEach((h,c)=>o[h]=vals[r][c]);
+    out.push(o);
+  }
+  return out;
+}
+// 題目、選項及答案均保留 Sheet 顯示文字，不把日期型儲存值轉成 Date 字串。
+// 無法從已變成日期的資料可靠推回原始分數；不猜測或改寫學生／題庫資料。
+function cachedQuestionObjectsDisplay_(){
+  const c=CacheService.getScriptCache(),key='QUESTION_DISPLAY_V5106_STABILITY';
+  const hit=c.get(key);if(hit){try{return JSON.parse(hit);}catch(e){}}
+  const rows=readQuestionObjectsDisplay_();
+  try{c.put(key,JSON.stringify(rows),600);}catch(e){}
+  return rows;
+}
+function questionEnabled_(row){
+  return !['FALSE','否','0'].includes(String(row['是否啟用']??'').trim().toUpperCase());
+}
+function getQuestionBankSubjectFast(subject){
+  const s=String(subject||'').trim();
+  if(!['國語','數學','英文','自然','社會'].includes(s))return [];
+  const c=CacheService.getScriptCache(),key='QUESTION_SUBJECT_V5106_DISPLAY:'+s;
+  const hit=c.get(key);if(hit){try{return JSON.parse(hit);}catch(e){}}
+
+  const rows=cachedQuestionObjectsDisplay_().filter(x=>String(x['科目']||'')===s && questionEnabled_(x));
+
+  const out=rows.map(x=>{
+    const qi=resolveQuestionImage_(x);
+    return {
+      id:String(x['題目ID']||''),
+      subject:s,
+      unit:String(x['單元']||''),
+      type:String(x['題型']||'選擇題'),
+      text:String(x['題目']||''),
+      options:[x['選項A'],x['選項B'],x['選項C'],x['選項D']].filter(v=>v!==''&&v!=null),
+      answer:String(x['答案']||''),
+      explanation:String(x['解析']||''),
+      imageId:qi.imageId,
+      image:qi.image
+    };
+  });
+
+  try{c.put(key,JSON.stringify(out),600);}catch(e){}
+  return safeForClient_(out);
+}
+
 function getQuestionBankBundleFast(){
-  const c=CacheService.getScriptCache(),key='QUESTION_BANK_V596';
+  const c=CacheService.getScriptCache(),key='QUESTION_BANK_V5106_DISPLAY';
   const hit=c.get(key);if(hit){try{return JSON.parse(hit);}catch(e){}}
   const out={'國語':[],'數學':[],'英文':[],'自然':[],'社會':[]};
-  const rows=cachedObjects_(SHEETS.QUESTIONS,600)
-    .filter(x=>x['是否啟用']!==false && String(x['是否啟用']).toUpperCase()!=='FALSE');
+  const rows=cachedQuestionObjectsDisplay_().filter(questionEnabled_);
   rows.forEach(x=>{
     const s=String(x['科目']||'');if(!out[s])return;
     const qi=resolveQuestionImage_(x);
@@ -1607,16 +1758,11 @@ function getPostLoginBundleV596(studentId){
   const runtime=safeForClient_({
     mailbox:getMailboxFast_(id),
     unreadMail:getUnreadMailCountFast_(id),
-    inventory:getInventory(id),
-    backgrounds:getBackgroundCatalogCached_(),
-    monsters:getMonsterCatalogCached_(),
-    battleBackgrounds:getBattleBackgroundCatalogFast(),
-    petBattleConfigs:getPetBattleConfigFast()
+    inventory:getInventory(id)
   });
   return safeForClient_({
     core:core,
     runtime:runtime,
-    questionBank:getQuestionBankBundleFast(),
     challengeStatus:getAllChallengeStatusFastV596(id)
   });
 }
@@ -1668,6 +1814,12 @@ function adminGrantItemFast(password,studentId,itemId,quantity,reason){
 }
 
 /** V5.9.6 精簡 setup：不再連鎖 V593/V59/V57。 */
+function setupOrUpgradeV5961(){
+  const r=setupOrUpgradeV596();
+  try{const c=CacheService.getScriptCache();['國語','數學','英文','自然','社會'].forEach(s=>c.remove('QUESTION_SUBJECT_V5961:'+s));}catch(e){}
+  return 'V5.9.6.1 題庫單科載入修正完成';
+}
+
 function setupOrUpgradeV596(){
   const ss=SpreadsheetApp.getActive();
   const qsh=ss.getSheetByName(SHEETS.QUESTIONS);
@@ -1675,9 +1827,383 @@ function setupOrUpgradeV596(){
   try{
     const c=CacheService.getScriptCache();
     ['AUTH_STUDENTS_V596','QUESTION_BANK_V596','FAST_BG_CATALOG','FAST_MONSTER_CATALOG','FAST_BATTLE_BG','FAST_PET_BATTLE'].forEach(k=>c.remove(k));
+    ['國語','數學','英文','自然','社會'].forEach(s=>c.remove('QUESTION_SUBJECT_V5961:'+s));
   }catch(e){}
   try{clearGameConfigCache();}catch(e){}
   return 'V5.9.6 高速版升級完成';
+}
+
+
+/** ======================== V5.9.7 STATIC CATALOGS ======================== */
+function getPetCatalogFastV598(){
+  return cachedObjects_(SHEETS.PET_CONFIG,21600)
+    .filter(x=>x['是否開放']!==false && String(x['是否開放']).toUpperCase()!=='FALSE')
+    .map(x=>({
+      petId:String(x['寵物ID']||''),
+      name:String(x['名稱']||x['寵物ID']||''),
+      stage1:String(x['第一階圖片']||'').replace(/\\/g,'/'),
+      stage2:String(x['第二階圖片']||'').replace(/\\/g,'/'),
+      stage3:String(x['第三階圖片']||'').replace(/\\/g,'/'),
+      stage2Level:Number(x['第二階需求等級']||10),
+      stage3Level:Number(x['第三階需求等級']||25),
+      price:Number(x['取得價格']||0),
+      enabled:x['是否開放']!==false,
+      moveType:String(x['移動類型']||'地面型'),
+      attribute:String(x['屬性']||'光'),
+      dialogues:[
+        String(x['對話1']||'今天也一起努力吧！'),
+        String(x['對話2']||'我喜歡這裡～'),
+        String(x['對話3']||'一起變強吧！')
+      ]
+    }));
+}
+
+function getItemCatalogFastV598(){
+  return cachedObjects_(SHEETS.ITEM_CONFIG,21600)
+    .filter(x=>x['是否開放']!==false && String(x['是否開放']).toUpperCase()!=='FALSE')
+    .map(x=>({
+      itemId:String(x['道具ID']||''),
+      name:String(x['名稱']||x['道具ID']||''),
+      type:String(x['類型']||''),
+      effect:Number(x['效果值']||0),
+      image:String(x['圖片']||'').replace(/\\/g,'/'),
+      description:String(x['說明']||''),
+      enabled:x['是否開放']!==false
+    }));
+}
+
+function getStaticCatalogBundleV598(forceRefresh){
+  const c=CacheService.getScriptCache(),key='STATIC_CATALOG_BUNDLE_V598';
+  if(!forceRefresh){
+    const hit=c.get(key);
+    if(hit){try{return JSON.parse(hit);}catch(e){}}
+  }
+  const lock=LockService.getScriptLock();
+  let locked=false;
+  if(!forceRefresh){
+    try{lock.waitLock(8000);locked=true;}catch(e){
+      const retry=c.get(key);
+      if(retry){try{return JSON.parse(retry);}catch(x){}}
+    }
+  }
+  try{
+    if(!forceRefresh){
+      const hit2=c.get(key);
+      if(hit2){try{return JSON.parse(hit2);}catch(e){}}
+    }
+    const out=safeForClient_({
+      pets:getPetCatalogFastV598(),
+      lands:getBackgroundCatalogCached_(),
+      monsters:getMonsterCatalogCached_(),
+      battleBackgrounds:getBattleBackgroundCatalogFast(),
+      petBattleConfigs:getPetBattleConfigFast(),
+      items:getItemCatalogFastV598()
+    });
+    try{
+      const txt=JSON.stringify(out);
+      if(txt.length<95000)c.put(key,txt,21600);
+    }catch(e){}
+    return out;
+  }finally{
+    if(locked){try{lock.releaseLock();}catch(e){}}
+  }
+}
+
+// 舊 V5.9.7 API 保留相容性，但資料仍由試算表產生。
+function getStaticCatalogBundleV597(){ return getStaticCatalogBundleV598(false); }
+
+function clearAllGameConfigCacheV598_(){
+  const c=CacheService.getScriptCache();
+
+  // cachedObjects_ 使用的 Sheet 設定快取
+  [
+    SHEETS.PET_CONFIG,SHEETS.LANDS,SHEETS.FURNITURE,SHEETS.ITEM_CONFIG,
+    SHEETS.QUESTIONS,SHEETS.MONSTERS,SHEETS.BATTLE_BACKGROUNDS,SHEETS.PET_BATTLE
+  ].forEach(n=>{try{c.remove('CFG_'+n);}catch(e){}});
+
+  [
+    'STATIC_CATALOG_BUNDLE_V598','STATIC_CATALOG_BUNDLE_V597',
+    'FAST_BG_CATALOG','FAST_MONSTER_CATALOG','FAST_BATTLE_BG','FAST_PET_BATTLE',
+    'QUESTION_BANK_V596','QUESTION_COUNTS_V5101',
+    'QUESTION_DISPLAY_V5106_STABILITY','QUESTION_BANK_V5106_DISPLAY'
+  ].forEach(k=>{try{c.remove(k);}catch(e){}});
+
+  ['國語','數學','英文','自然','社會'].forEach(s=>{
+    try{c.remove('QUESTION_SUBJECT_V5961:'+s);}catch(e){}
+    try{c.remove('QUESTION_SUBJECT_V5100:'+s);}catch(e){}
+    try{c.remove('QUESTION_SUBJECT_V5106_DISPLAY:'+s);}catch(e){}
+  });
+}
+
+function adminRefreshGameConfigV598(password){
+  verifyAdminPassword_(password);
+  clearAllGameConfigCacheV598_();
+
+  // 清完後立即從 Google Sheet 重建一次，第一位學生不必承擔重建時間。
+  const catalog=getStaticCatalogBundleV598(true);
+
+  return safeForClient_({
+    ok:true,
+    updatedAt:Utilities.formatDate(new Date(),Session.getScriptTimeZone()||'Asia/Taipei','yyyy/MM/dd HH:mm:ss'),
+    catalog:catalog
+  });
+}
+
+function setupOrUpgradeV598(){
+  const ss=SpreadsheetApp.getActive();
+  const qsh=ss.getSheetByName(SHEETS.QUESTIONS);
+  if(qsh)ensureHeaders_(qsh,['單元','圖片ID','圖片路徑']);
+
+  clearAllGameConfigCacheV598_();
+  // 先建立一次共用設定快取。
+  getStaticCatalogBundleV598(true);
+
+  return 'V5.9.8 完成：Google 試算表已成為唯一設定來源';
+}
+
+
+
+/** ======================== V5.9.9 TEACHER / BATCH ======================== */
+function adminAddCoinsFastV599(password,studentId,amount,reason){
+  verifyAdminPassword_(password);
+  const n=Math.max(1,Number(amount||0));
+  const f=findStudentRow_(studentId);if(!f)throw new Error('找不到學生');
+  const newCoins=Number(f.obj['金幣']||0)+n;
+  f.sheet.getRange(f.row,f.hm['金幣']).setValue(newCoins);
+  SpreadsheetApp.getActive().getSheetByName(SHEETS.REWARDS)
+    .appendRow([new Date(),studentId,f.obj['姓名'],n,0,reason||'老師發放']);
+  return {ok:true,coins:newCoins};
+}
+
+function adminGrantItemsBatchV599(password,studentIds,itemId,quantity,reason){
+  verifyAdminPassword_(password);
+  const ids=[...new Set((studentIds||[]).map(x=>String(x).trim()).filter(Boolean))];
+  if(!ids.length)throw new Error('沒有選擇學生');
+  const iid=String(itemId||'').trim(),qty=Math.max(1,Number(quantity||1));
+  const ss=SpreadsheetApp.getActive(),sh=ss.getSheetByName(SHEETS.STUDENT_ITEMS),hm=headerMapFast_(sh);
+  const lastCol=sh.getLastColumn();
+  const vals=sh.getLastRow()>=2?sh.getRange(2,1,sh.getLastRow()-1,lastCol).getValues():[];
+  const idSet=new Set(ids),found=new Map();
+  for(let i=0;i<vals.length;i++){
+    const sid=String(vals[i][hm['學號']-1]||'').trim();
+    const it=String(vals[i][hm['道具ID']-1]||'');
+    if(idSet.has(sid)&&it===iid)found.set(sid,i);
+  }
+  ids.forEach(sid=>{
+    if(found.has(sid)){
+      const i=found.get(sid);
+      vals[i][hm['數量']-1]=Number(vals[i][hm['數量']-1]||0)+qty;
+    }
+  });
+  if(vals.length)sh.getRange(2,1,vals.length,lastCol).setValues(vals);
+
+  const appends=[];
+  ids.forEach(sid=>{
+    if(found.has(sid))return;
+    const row=Array(lastCol).fill('');
+    row[hm['學號']-1]=sid;row[hm['道具ID']-1]=iid;row[hm['數量']-1]=qty;
+    appends.push(row);
+  });
+  if(appends.length)sh.getRange(sh.getLastRow()+1,1,appends.length,lastCol).setValues(appends);
+
+  const rewards=ss.getSheetByName(SHEETS.REWARDS);
+  const studentMap={};readObjects_(ss.getSheetByName(SHEETS.STUDENTS)).forEach(s=>studentMap[String(s['學號']).trim()]=s);
+  const rr=ids.map(sid=>[new Date(),sid,(studentMap[sid]||{})['姓名']||'',0,0,(reason||'老師批量發放')+'：'+iid+' ×'+qty]);
+  if(rr.length)rewards.getRange(rewards.getLastRow()+1,1,rr.length,6).setValues(rr);
+  return {ok:true,updated:ids.length,itemId:iid,quantity:qty};
+}
+
+function useExpItemsBatchV599(studentId,petId,uses){
+  const lock=LockService.getScriptLock();
+  lock.waitLock(12000);
+  try{
+  const id=String(studentId||'').trim(),pid=String(petId||'').trim();
+  const list=Array.isArray(uses)?uses:[];
+  if(!list.length)throw new Error('沒有選擇經驗道具');
+
+  const ss=SpreadsheetApp.getActive(),itemCfg=cachedObjects_(SHEETS.ITEM_CONFIG,300);
+  const cfgMap={};itemCfg.forEach(x=>cfgMap[String(x['道具ID'])]=x);
+
+  const itemSh=ss.getSheetByName(SHEETS.STUDENT_ITEMS),ih=headerMap_(itemSh),vals=itemSh.getDataRange().getValues();
+  const requested={};
+  list.forEach(u=>{
+    const iid=String(u.itemId||'').trim(),q=Math.max(1,Number(u.quantity||1));
+    if(!Number.isSafeInteger(q))throw new Error('道具數量必須是有效整數');
+    const cfg=cfgMap[iid];
+    if(!cfg||String(cfg['類型'])!=='經驗型')throw new Error(iid+' 不是經驗型道具');
+    requested[iid]=(requested[iid]||0)+q;
+  });
+
+  const rowByItem={};
+  for(let i=1;i<vals.length;i++){
+    if(String(vals[i][ih['學號']-1]).trim()===id){
+      rowByItem[String(vals[i][ih['道具ID']-1]||'')]=i;
+    }
+  }
+  let gained=0;
+  Object.keys(requested).forEach(iid=>{
+    const idx=rowByItem[iid];
+    if(idx===undefined)throw new Error('道具數量不足：'+iid);
+    const have=Number(vals[idx][ih['數量']-1]||0),q=requested[iid];
+    if(have<q)throw new Error('道具數量不足：'+iid);
+    vals[idx][ih['數量']-1]=have-q;
+    gained+=Number(cfgMap[iid]['效果值']||0)*q;
+  });
+  // 先驗證寵物與進化設定，確認可完成升級後才扣道具。
+  const petSh=ss.getSheetByName(SHEETS.PETS),ph=headerMap_(petSh),pv=petSh.getDataRange().getValues();
+  let prow=-1,level=1,exp=0;
+  for(let i=1;i<pv.length;i++){
+    if(String(pv[i][ph['學號']-1]).trim()===id && String(pv[i][ph['寵物ID']-1])===pid){
+      prow=i+1;level=Number(pv[i][ph['等級']-1]||1);exp=Number(pv[i][ph['EXP']-1]||0);break;
+    }
+  }
+  if(prow<0)throw new Error('找不到寵物');
+  const pcfg=cachedObjects_(SHEETS.PET_CONFIG,300).find(x=>String(x['寵物ID'])===pid)||{};
+  if(level>=30){
+    const pet=decoratePet_({'寵物ID':pid,'等級':level,'EXP':exp},pcfg);
+    return {ok:true,gained:0,level,exp,expNeed:0,stage:pet.stage,image:pet.image,inventory:getInventory(id)};
+  }
+  exp+=gained;
+  while(level<30 && exp>=expNeeded_(level)){exp-=expNeeded_(level);level++;}
+  if(level>=30)exp=0;
+  const l2=Number(pcfg['第二階需求等級']||10),l3=Number(pcfg['第三階需求等級']||25);
+  const stage=level>=l3?3:(level>=l2?2:1);
+  const image=stage===3?pcfg['第三階圖片']:(stage===2?pcfg['第二階圖片']:pcfg['第一階圖片']);
+
+  // 只寫入本次消耗的道具數量，不把整張學生道具表寫回。
+  Object.keys(requested).forEach(iid=>{
+    const idx=rowByItem[iid];
+    itemSh.getRange(idx+1,ih['數量']).setValue(vals[idx][ih['數量']-1]);
+  });
+  petSh.getRange(prow,ph['等級']).setValue(level);
+  petSh.getRange(prow,ph['EXP']).setValue(exp);
+
+  return {
+    ok:true,gained,level,exp,expNeed:level>=30?0:expNeeded_(level),stage,image:image||'',
+    inventory:getInventory(id)
+  };
+  }finally{
+    lock.releaseLock();
+  }
+}
+
+function setupOrUpgradeV599(){
+  // 不重跑舊版升級鏈，只清目前設定快取。
+  try{clearAllGameConfigCacheV598_();}catch(e){}
+  return 'V5.9.9 更新完成';
+}
+
+function setupOrUpgradeV5100(){
+  try{clearAllGameConfigCacheV598_();}catch(e){}
+  try{
+    const c=CacheService.getScriptCache();
+    ['國語','數學','英文','自然','社會'].forEach(s=>c.remove('QUESTION_SUBJECT_V5100:'+s));
+  }catch(e){}
+  return 'V5.10.0 完成：無題目科目自動關閉，分數顯示讀取也已修正';
+}
+
+
+/** ======================== V5.10.1 CLASSROOM PERFORMANCE ======================== */
+
+/**
+ * 登入後只拿小屋核心資料 + 背包。
+ * 不再讀完整信箱、不讀五科題庫、不讀挑戰紀錄。
+ */
+function getPostLoginBundleV5101(studentId){
+  const id=String(studentId||'').trim();
+  return safeForClient_({
+    core:getStudentCoreStateV55_(id),
+    runtime:{
+      inventory:getInventory(id)
+    },
+    challengeStatus:getAllChallengeStatusFastV596(id)
+  });
+}
+
+/**
+ * 對戰首頁只需要「各科有幾題」與「今日挑戰狀態」。
+ * 這比一次下載五科完整題目小非常多。
+ */
+function getChallengeHomeBundleV5101(studentId){
+  const id=String(studentId||'').trim();
+  const c=CacheService.getScriptCache();
+  const countKey='QUESTION_COUNTS_V5101';
+
+  let counts=null;
+  const hit=c.get(countKey);
+  if(hit){try{counts=JSON.parse(hit);}catch(e){}}
+
+  if(!counts){
+    counts={'國語':0,'數學':0,'英文':0,'自然':0,'社會':0};
+    const rows=readQuestionObjectsDisplay_();
+    rows.forEach(x=>{
+      const s=String(x['科目']||'').trim();
+      if(!(s in counts))return;
+      const enabled=String(x['是否啟用']||'').trim().toUpperCase();
+      if(enabled==='FALSE'||enabled==='否'||enabled==='0')return;
+      counts[s]++;
+    });
+    try{c.put(countKey,JSON.stringify(counts),600);}catch(e){}
+  }
+
+  return safeForClient_({
+    counts:counts,
+    status:getAllChallengeStatusFastV596(id)
+  });
+}
+
+function setupOrUpgradeV5106(){
+  try{
+    const c=CacheService.getScriptCache();
+    ['STATIC_CATALOG_BUNDLE_V598','FAST_BG_CATALOG','FAST_MONSTER_CATALOG','FAST_BATTLE_BG','FAST_PET_BATTLE'].forEach(k=>{try{c.remove(k);}catch(e){}});
+  }catch(e){}
+  return 'V5.10.6 效能急救版完成';
+}
+
+function setupOrUpgradeV5105(){
+  const ss=SpreadsheetApp.getActiveSpreadsheet();
+  ensureSheet_(SHEETS.BATTLE_SAVES,['學號','科目','寵物ID','怪物編號','怪物HP','怪物最大HP','已看題目','最後更新']);
+  try{
+    const c=CacheService.getScriptCache();
+    ['QUESTION_COUNTS_V5101'].forEach(k=>{try{c.remove(k);}catch(e){}});
+  }catch(e){}
+  return 'V5.10.5 對戰存檔功能完成';
+}
+
+function setupOrUpgradeV5104(){
+  try{
+    const c=CacheService.getScriptCache();
+    ['AUTH_STUDENTS_V596','QUESTION_COUNTS_V5101'].forEach(k=>{try{c.remove(k);}catch(e){}});
+  }catch(e){}
+  return 'V5.10.4 小更新完成';
+}
+
+function setupOrUpgradeV5103(){
+  try{
+    const c=CacheService.getScriptCache();
+    c.remove('QUESTION_COUNTS_V5101');
+  }catch(e){}
+  return 'V5.10.3 教室連線診斷版完成';
+}
+
+function setupOrUpgradeV5101(){
+  try{
+    const c=CacheService.getScriptCache();
+    c.remove('QUESTION_COUNTS_V5101');
+    ['國語','數學','英文','自然','社會'].forEach(s=>{
+      c.remove('QUESTION_SUBJECT_V5100:'+s);
+      c.remove('QUESTION_SUBJECT_V5961:'+s);
+    });
+  }catch(e){}
+  return 'V5.10.1 教室多人效能版完成';
+}
+
+function diagnosticPingV5103(){
+  return {
+    ok:true,
+    serverTime:Utilities.formatDate(new Date(),Session.getScriptTimeZone()||'Asia/Taipei','yyyy/MM/dd HH:mm:ss'),
+    version:APP_VERSION
+  };
 }
 
 function doPost(e) {
@@ -1692,14 +2218,21 @@ function doPost(e) {
       loginBootstrap: loginBootstrap,
       loginCore: loginCoreV55,
       loginFastV596: loginFastV596,
+      diagnosticPingV5103: diagnosticPingV5103,
       getStudentState: getStudentStateV55,
       getInventory: getInventory,
       getShop: getShop,
       getBackgroundCatalogFresh: getBackgroundCatalogFresh,
       getBackgroundCatalogFast: getBackgroundCatalogFast,
       getRuntimeBundleFast: getRuntimeBundleFast,
+      getStaticCatalogBundleV597: getStaticCatalogBundleV597,
+      getStaticCatalogBundleV598: getStaticCatalogBundleV598,
+      adminRefreshGameConfigV598: adminRefreshGameConfigV598,
       getPostLoginBundleV596: getPostLoginBundleV596,
+      getPostLoginBundleV5101: getPostLoginBundleV5101,
+      getChallengeHomeBundleV5101: getChallengeHomeBundleV5101,
       getQuestionBankBundleFast: getQuestionBankBundleFast,
+      getQuestionBankSubjectFast: getQuestionBankSubjectFast,
       getMonsterCatalogFresh: getMonsterCatalogCached_,
       getBattleBackgroundCatalogFast: getBattleBackgroundCatalogFast,
       getPetBattleConfigFast: getPetBattleConfigFast,
@@ -1711,6 +2244,7 @@ function doPost(e) {
       setPlotBackgroundFast: setPlotBackgroundFast,
       movePetToLand: movePetToLandV55,
       useExpItem: useExpItem,
+      useExpItemsBatchV599: useExpItemsBatchV599,
       getMailbox: getMailbox,
       getMailboxFresh: getMailboxFresh,
       claimMail: claimMail,
@@ -1719,12 +2253,17 @@ function doPost(e) {
       startChallengeBatch: startChallengeBatch,
       getChallengeQuestionBatch: getChallengeQuestionBatch,
       syncChallengeBatch: syncChallengeBatch,
+      getBattleProgressV5105: getBattleProgressV5105,
+      saveBattleProgressV5105: saveBattleProgressV5105,
+      clearBattleProgressV5105: clearBattleProgressV5105,
       savePetPositionsBatch: savePetPositionsBatch,
       adminLogin: adminLogin,
       getAdminDataSecure: getAdminDataSecure,
       adminAddCoins: adminAddCoins,
+      adminAddCoinsFastV599: adminAddCoinsFastV599,
       adminGrantItem: adminGrantItem,
       adminGrantItemFast: adminGrantItemFast,
+      adminGrantItemsBatchV599: adminGrantItemsBatchV599,
       adminAssignPet: adminAssignPet
     };
 
