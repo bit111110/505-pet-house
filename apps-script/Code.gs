@@ -2390,19 +2390,39 @@ function setupOrUpgradeV600(){
   try{
     const ss=SpreadsheetApp.getActive(),items=ss.getSheetByName(SHEETS.ITEM_CONFIG);
     if(!items)throw new Error('請先建立 V5.10.6 的道具設定工作表');
-    const rows=readObjects_(items);
+    const rows=readRowsWithPositionV600_(items),repairs=[];
+    const isMissing=value=>value==null||(typeof value==='string'&&value.trim()==='');
+    const defaultsFor=stone=>({'道具ID':stone.itemId,'名稱':stone.name,'類型':'屬性石','效果值':Number(stone.increment),'圖片':'','說明':'同屬性寵物的一個已解鎖技能永久增加 '+stone.increment+' 傷害。','是否開放':true});
     ATTRIBUTE_STONES_V600.forEach(stone=>{
-      const existing=rows.find(x=>String(x['道具ID'])===stone.itemId);
-      if(existing && (String(existing['類型'])!=='屬性石'||Number(existing['效果值'])!==Number(stone.increment)))throw new Error('道具 ID 已被其他設定使用：'+stone.itemId);
+      const matches=rows.filter(x=>String(x['道具ID']).trim()===stone.itemId);
+      matches.forEach(existing=>{
+        const name=String(existing['名稱']||'').trim(),type=String(existing['類型']||'').trim();
+        const namesAnotherStone=ATTRIBUTE_STONES_V600.some(other=>other.itemId!==stone.itemId&&other.name===name);
+        // 固定 ID 配合同石名稱／屬性石類型識別；僅留下 ID 的中斷列也可補齊。
+        // 效果值缺漏不是占用衝突，已填值（包含 0、false、自訂文字）一律保留。
+        const sameStone=!namesAnotherStone&&(name===stone.name||type==='屬性石'||(!name&&!type));
+        if(!sameStone)throw new Error('道具 ID 已被其他設定使用：'+stone.itemId);
+        Object.entries(defaultsFor(stone)).forEach(([key,value])=>{
+          if(key!=='道具ID'&&!isMissing(value)&&isMissing(existing[key]))repairs.push({row:existing._row,key,value});
+        });
+      });
     });
+    ensureSheet_(SHEETS.ITEM_CONFIG,['道具ID','名稱','類型','效果值','圖片','說明','是否開放']);
     ensureSheet_(SHEETS.SKILL_ENHANCEMENTS,SKILL_ENHANCEMENT_HEADERS_V600);
     ensureSheet_(SHEETS.REWARDS,['時間','學號','姓名','金幣變動','EXP變動','原因'].concat(CHALLENGE_BATCH_HEADERS_V600));
     ensureSheet_(SHEETS.MAILBOX,['信件ID','學號','時間','寄件者','標題','內容','附件類型','附件ID','附件數量','是否領取','領取交易']);
-    const missing=ATTRIBUTE_STONES_V600.filter(s=>!rows.some(x=>String(x['道具ID'])===s.itemId));
-    appendObjectsBatch_(items,missing.map(s=>({'道具ID':s.itemId,'名稱':s.name,'類型':'屬性石','效果值':Number(s.increment),'圖片':'','說明':'同屬性寵物的一個已解鎖技能永久增加 '+s.increment+' 傷害。','是否開放':true})));
+    const missing=ATTRIBUTE_STONES_V600.filter(s=>!rows.some(x=>String(x['道具ID']).trim()===s.itemId));
     const types=[...new Set(rows.map(x=>String(x['類型']||'')).filter(Boolean).concat(['經驗型','寶物型','屬性石']))];
-    const hm=headerMap_(items);
-    items.getRange(2,hm['類型'],Math.max(1,items.getMaxRows()-1),1).setDataValidation(SpreadsheetApp.newDataValidation().requireValueInList(types,true).setAllowInvalid(false).build());
+    const hm=headerMap_(items),maxRows=items.getMaxRows(),requiredRows=Math.max(2,items.getLastRow()+missing.length);
+    // 先補足新石頭需要的列數，再覆蓋完整類型欄驗證，包含 C1001 等新增列。
+    if(requiredRows>maxRows)items.insertRowsAfter(maxRows,requiredRows-maxRows);
+    items.getRange(2,hm['類型'],items.getMaxRows()-1,1).setDataValidation(SpreadsheetApp.newDataValidation().requireValueInList(types,true).setAllowInvalid(false).build());
+    SpreadsheetApp.flush(); // 確認新規則先套用，才提交屬性石資料。
+    repairs.forEach(repair=>{
+      const cell=items.getRange(repair.row,hm[repair.key]);
+      if(isMissing(cell.getValue())&&!cell.getFormula?.())cell.setValue(repair.value);
+    });
+    appendObjectsBatch_(items,missing.map(defaultsFor));
     clearAllGameConfigCacheV598_();
     return 'V6.0 升級完成：補齊屬性石設定、技能強化紀錄及信箱領取交易欄；未發放道具或重設學生資料';
   }finally{lock.releaseLock();}
