@@ -56,16 +56,16 @@ setFault((event,when)=>{if(!failed&&event.name==='學生道具'&&when==='after')
 assert.throws(()=>call('claimMailFast','50501',pending),/response lost/);setFault(null);
 assert.equal(quantity('50501','STONE_GRASS'),before+2);
 const token=call('createStudentSessionV600_','50501');
-assert.equal(call('useAttributeStoneV600','50501','PET001','GEN-3','STONE_GRASS',randomUUID(),token).ok,false,'pending mail blocks stone consumption');
-assert.throws(()=>call('adminGrantItemFast','test-only-password','50501','STONE_GRASS',1),/尚未完成/);
-const next=makeMail();assert.throws(()=>call('claimMailFast','50501',next),/尚未完成/);
+assert.doesNotThrow(()=>call('assertNoPendingStoneMailV600_','50501','STONE_GRASS'),'committed receipt permits subsequent stone consumption');
+const next=makeMail();
 call('claimAllMailFast','50501');assert.equal(quantity('50501','STONE_GRASS'),before+4,'bulk recovers pending first');
 call('claimMailFast','50501',pending);assert.equal(quantity('50501','STONE_GRASS'),before+4);
-// Failure before quantity write leaves a durable transaction; retry performs one credit.
-const beforeWrite=makeMail();failed=false;const b=quantity('50501','STONE_GRASS');
+// An uncertain SUBMITTED request is never blindly reissued. No inventory credit on whole-batch rejection.
+const beforeWrite=makeMail('STONE_FIRE',2,'50502');failed=false;const b=quantity('50502','STONE_FIRE');
 setFault((event,when)=>{if(!failed&&event.name==='學生道具'&&when==='before'){failed=true;throw Error('before credit');}});
-assert.throws(()=>call('claimMailFast','50501',beforeWrite),/before credit/);setFault(null);
-assert.equal(quantity('50501','STONE_GRASS'),b);call('claimMailFast','50501',beforeWrite);assert.equal(quantity('50501','STONE_GRASS'),b+2);
+assert.throws(()=>call('claimMailFast','50502',beforeWrite),/before credit/);setFault(null);
+assert.equal(quantity('50502','STONE_FIRE'),b);
+assert.throws(()=>call('claimMailFast','50502',beforeWrite),/尚未確認/);assert.equal(quantity('50502','STONE_FIRE'),b);
 // Response lost after marking claimed still does not grant twice.
 const done=makeMail();failed=false;const d=quantity('50501','STONE_GRASS');
 setFault((event,when)=>{if(!failed&&event.name==='信箱'&&event.c===mh['是否領取']&&when==='after'){failed=true;throw Error('claimed response lost');}});

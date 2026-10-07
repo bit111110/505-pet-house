@@ -32,10 +32,24 @@ function makeSheet(name, values = []) {
   };
   tables.set(name, sh); return sh;
 }
-const ss = { getSheetByName: name => tables.get(name), insertSheet: name => makeSheet(name) };
+const ss = { getId:()=> 'memory-spreadsheet', getSheetByName: name => tables.get(name), insertSheet: name => makeSheet(name) };
 const context = vm.createContext({ console, Date, Math, JSON, BigInt, Set, Map, Number, String, Object, Array, Error,
   SpreadsheetApp: { getActive: () => ss, getActiveSpreadsheet: () => ss, flush() {},
     newDataValidation: () => ({ requireValueInList(types) { this.types = types; return this; }, setAllowInvalid() { return this; }, build() { return { types: this.types }; } }) },
+  Sheets:{Spreadsheets:{get:()=>({spreadsheetId:'memory-spreadsheet'}),batchUpdate({requests}){
+    assert.equal(locked,true,'atomic mail commit holds shared lock');
+    const events=requests.filter(r=>r.updateCells).map(({updateCells:u})=>{
+      const sh=[...tables.values()].find(s=>s.getSheetId()===u.start.sheetId);
+      assert.ok(sh);assert.equal(u.fields,'userEnteredValue');
+      const rows=u.rows.map(row=>row.values.map(c=>{const v=c.userEnteredValue;return v.numberValue??v.boolValue??v.stringValue;}));
+      return {name:sh.name,r:u.start.rowIndex+1,c:u.start.columnIndex+1,n:rows.length,m:rows[0].length,rows,atomic:true};
+    });
+    // All before hooks run before any subrequest is applied: a failure rejects the entire batch.
+    events.forEach(e=>{if(fault)fault(e,'before');});
+    events.forEach(e=>{const sh=tables.get(e.name);e.rows.forEach((r,i)=>r.forEach((v,j)=>{sh.values[e.r+i-1]||=[];sh.values[e.r+i-1][e.c+j-1]=v;}));writes.push(e);});
+    // A lost response is injected only after ALL inventory/receipt/mail updates have committed.
+    events.forEach(e=>{if(fault)fault(e,'after');});return {};
+  }}},
   Utilities: { getUuid: randomUUID },
   CacheService: { getScriptCache: () => ({ get: key => cache.get(key) || null, put: (key, value) => cache.set(key, value), remove: key => cache.delete(key) }) },
   LockService: { getScriptLock: () => ({ waitLock() { assert.equal(locked, false); locked = true; }, releaseLock() { locked = false; } }) }

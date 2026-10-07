@@ -5,7 +5,10 @@ const {execFileSync}=require('node:child_process');
 const {chromium}=require('playwright');
 const root=path.resolve(__dirname,'..');
 const backend=fs.readFileSync(path.join(root,'apps-script/Code.gs'),'utf8');
-assert.equal(backend.replace(/\r\n/g,'\n'),execFileSync('git',['show','HEAD:apps-script/Code.gs'],{cwd:root,encoding:'utf8'}).replace(/\r\n/g,'\n'),'no backend/drop/schema changes');
+const vm=require('node:vm');
+const oldBackend=execFileSync('git',['show','HEAD:apps-script/Code.gs'],{cwd:root,encoding:'utf8'});
+const oldContext=vm.createContext({}),newContext=vm.createContext({});vm.runInContext(oldBackend,oldContext);vm.runInContext(backend,newContext);
+for(const name of ['randomGift_','hourlyPetGiftV600_','setupOrUpgradeV600','syncChallengeBatch','getBattleProgressV5105','saveBattleProgressV5105','clearBattleProgressV5105'])assert.equal(newContext[name].toString().replace(/\r\n/g,'\n'),oldContext[name].toString().replace(/\r\n/g,'\n'),name+' unchanged');
 const output=process.env.BATTLE_SCREENSHOT_DIR;
 async function fixture(page){
  await page.route('**/*',async route=>{
@@ -107,7 +110,7 @@ async function run(){
    await page.close();
   }
   assert.deepEqual(failures,[],'no browser JavaScript errors');
-  console.log('PASS V6.0 battle UI: real Chrome desktop/tablet/phone layout, fixed questions and image, all question types, boosted final damage, EXP/double-submit guard, 3-error lock, V5.10.5 save/resume and seen list, late lookup cancellation, animation/DOM cleanup, unchanged backend.');
+  console.log('PASS V6.0 battle UI: real Chrome desktop/tablet/phone layout, fixed questions and image, all question types, boosted final damage, EXP/double-submit guard, 3-error lock, V5.10.5 save/resume and seen list, late lookup cancellation, animation/DOM cleanup, unchanged battle/drop/schema rules.');
  }finally{await browser.close();}
 }
 run().catch(e=>{console.error(e);process.exitCode=1;});
