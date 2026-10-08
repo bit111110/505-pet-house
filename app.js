@@ -1,4 +1,101 @@
-const FRONTEND_BUILD='20261008-v610-admin-batch';
+const FRONTEND_BUILD='20261008-v610-catalogs';
+const STONE_SPRITE_URL_V610='assets/items/stones/attribute-stones.png';
+const STONE_SPRITES_V610={LIGHT:0,EARTH:1,DARK:2,GRASS:3,WATER:4,POISON:5,FIRE:6,ELECTRIC:7,ICE:8,WIND:9,STEEL:10,CHAOS:11};
+const STONE_ATTRIBUTES_V610=['光','地','暗','草','水','毒','火','電','冰','風','鋼','混沌'];
+let STONE_IMAGE_STATE_V610='idle',STONE_IMAGE_PROMISE_V610=null;
+function itemImageHtmlV610(itemId,config={},size=40){
+  config=config||{};
+  const index=String(itemId).startsWith('STONE_')?STONE_SPRITES_V610[String(itemId).slice(6)]:undefined;
+  if(index!==undefined)return `<span class="stone-item-sprite" data-stone-sprite="${index}" style="--item-size:${Number(size)||40}px" role="img" aria-label="${STONE_ATTRIBUTES_V610[index]}之石" title="${STONE_ATTRIBUTES_V610[index]}之石"><span>💎</span></span>`;
+  const src=config['圖片']||config.image||'';
+  return src?`<span class="item-image" style="--item-size:${Number(size)||40}px"><span>🎁</span><img src="${esc(src)}" alt="" loading="lazy" onerror="this.remove()"></span>`:'<span class="item-image item-image-empty" aria-hidden="true">🎁</span>';
+}
+function activateStoneSpritesV610(){
+  if(typeof document==='undefined')return;
+  const elements=[...document.querySelectorAll('[data-stone-sprite]')];if(!elements.length)return;
+  const apply=()=>document.querySelectorAll('[data-stone-sprite]').forEach(el=>{
+    if(STONE_IMAGE_STATE_V610!=='ready')return;
+    const index=Number(el.dataset.stoneSprite);
+    el.style.backgroundImage=`url("${STONE_SPRITE_URL_V610}")`;
+    el.style.backgroundPosition=`${index%4*100/3}% ${Math.floor(index/4)*50}%`;
+    el.classList.add('sprite-ready');
+  });
+  if(STONE_IMAGE_STATE_V610==='ready'){apply();return;}
+  if(STONE_IMAGE_STATE_V610==='failed')return;
+  if(!STONE_IMAGE_PROMISE_V610){
+    STONE_IMAGE_STATE_V610='loading';
+    STONE_IMAGE_PROMISE_V610=new Promise(resolve=>{const image=new Image();image.onload=()=>{STONE_IMAGE_STATE_V610='ready';resolve();};image.onerror=()=>{STONE_IMAGE_STATE_V610='failed';resolve();};image.src=STONE_SPRITE_URL_V610;});
+  }
+  STONE_IMAGE_PROMISE_V610.then(apply);
+}
+function renderAdminItemPreviewV610(){
+  const root=document.getElementById('adminItemPreviewV610'),id=document.getElementById('adminBatchItemV610')?.value;
+  if(root){root.innerHTML=itemImageHtmlV610(id,adminData?.items.find(x=>String(x['道具ID'])===id)||{},48);activateStoneSpritesV610();}
+}
+
+// Public metadata only. Cache is loaded on first furniture visit, never during login.
+let FURNITURE_CACHE_V610=null,FURNITURE_VIEW_EPOCH_V610=0,FURNITURE_OBSERVER_V610=null,FURNITURE_VISIBILITY_V610=null;
+const FURNITURE_CACHE_KEY_V610='petHouseFurnitureV610:'+FRONTEND_BUILD;
+function furnitureCacheClientV610(){
+  if(!FURNITURE_CACHE_V610){
+    let saved=null;try{saved=JSON.parse(localStorage.getItem(FURNITURE_CACHE_KEY_V610)||'null');}catch(e){}
+    FURNITURE_CACHE_V610={series:Array.isArray(saved?.series)?saved.series:null,bySeries:Object.assign(Object.create(null),saved?.bySeries&&typeof saved.bySeries==='object'?saved.bySeries:{}),loading:{}};
+  }
+  return FURNITURE_CACHE_V610;
+}
+function saveFurnitureCacheV610(cache){if(cache!==FURNITURE_CACHE_V610)return;try{localStorage.setItem(FURNITURE_CACHE_KEY_V610,JSON.stringify({series:cache.series,bySeries:cache.bySeries}));}catch(e){}}
+async function loadFurnitureMetadataV610(id,refresh=false){
+  const cache=furnitureCacheClientV610(),key=id?'SERIES:'+id:'HOME';
+  if(!refresh&&(id?Object.prototype.hasOwnProperty.call(cache.bySeries,id):cache.series!==null))return id?cache.bySeries[id]:cache.series;
+  if(!cache.loading[key])cache.loading[key]=(async()=>{
+    const r=id?await gs('getFurnitureBySeriesV610',id,refresh):await gs('getFurnitureSeriesV610',refresh);
+    if(r.ok===false)throw Error(r.message||'無法讀取家具');
+    const value=id?r.items:r.series;if(!Array.isArray(value))throw Error('家具資料格式錯誤');
+    if(id)cache.bySeries[id]=value;else cache.series=value;saveFurnitureCacheV610(cache);return value;
+  })().finally(()=>delete cache.loading[key]);
+  return cache.loading[key];
+}
+function cleanupFurnitureViewV610(){
+  FURNITURE_VIEW_EPOCH_V610++;FURNITURE_OBSERVER_V610?.disconnect();FURNITURE_OBSERVER_V610=null;
+  if(FURNITURE_VISIBILITY_V610){window.removeEventListener('scroll',FURNITURE_VISIBILITY_V610,true);window.removeEventListener('resize',FURNITURE_VISIBILITY_V610);FURNITURE_VISIBILITY_V610=null;}
+  const root=document.getElementById('furnitureMain');if(root)root.innerHTML='';
+}
+function furnitureImageHtmlV610(src,label){
+  return `<div class="furniture-image"><span class="furniture-image-fallback" role="img" aria-label="${esc(label)}">🪑</span>${src?`<img data-furniture-src="${esc(src)}" alt="${esc(label)}" loading="lazy" decoding="async" onload="this.parentElement.classList.add('image-ready')" onerror="this.remove()">`:''}</div>`;
+}
+function activateFurnitureImagesV610(){
+  const images=[...document.querySelectorAll('#furnitureMain [data-furniture-src]')];
+  const load=img=>{img.src=img.dataset.furnitureSrc;delete img.dataset.furnitureSrc;};
+  if(typeof IntersectionObserver!=='undefined'){
+    FURNITURE_OBSERVER_V610=new IntersectionObserver(entries=>entries.forEach(e=>{if(e.isIntersecting){load(e.target);FURNITURE_OBSERVER_V610.unobserve(e.target);}}),{rootMargin:'0px'});
+    images.forEach(img=>FURNITURE_OBSERVER_V610.observe(img));
+  }else{
+    FURNITURE_VISIBILITY_V610=()=>images.forEach(img=>{const r=img.getBoundingClientRect();if(img.dataset.furnitureSrc&&r.top<innerHeight&&r.bottom>0&&r.left<innerWidth&&r.right>0)load(img);});
+    window.addEventListener('scroll',FURNITURE_VISIBILITY_V610,true);window.addEventListener('resize',FURNITURE_VISIBILITY_V610);FURNITURE_VISIBILITY_V610();
+  }
+}
+async function renderFurnitureV610(seriesId='',refresh=false){
+  cleanupFurnitureViewV610();const epoch=FURNITURE_VIEW_EPOCH_V610,root=document.getElementById('furnitureMain');if(!root)return;
+  if(refresh){FURNITURE_CACHE_V610={series:null,bySeries:Object.create(null),loading:{}};try{localStorage.removeItem(FURNITURE_CACHE_KEY_V610);}catch(e){}}
+  panel.innerHTML='<h3>🪑 家具系列</h3><p>選擇系列瀏覽家具與預覽圖片。</p>';
+  root.innerHTML='<p class="furniture-empty">載入家具資料中…</p>';
+  try{
+    const rows=await loadFurnitureMetadataV610(seriesId,refresh);
+    if(epoch!==FURNITURE_VIEW_EPOCH_V610||currentTab!=='furniture')return;
+    const series=furnitureCacheClientV610().series?.find(s=>s.seriesId===seriesId);
+    root.innerHTML=`<div class="furniture-heading"><h2>${esc(seriesId?(series?.name||seriesId):'家具系列')}</h2><div class="row">${seriesId?'<button class="btn gray" onclick="renderFurnitureV610()">返回系列</button>':''}<button class="btn secondary" onclick="renderFurnitureV610('',true)">重新整理系列</button></div></div><div class="furniture-grid">${rows.map((x,i)=>seriesId?`<article class="furniture-card">${furnitureImageHtmlV610(x.thumbnail,x.name)}<h3>${esc(x.name)}</h3><p>${esc(x.type)} · ${esc(x.price)} 金幣</p><button class="btn secondary furniture-preview-button" data-index="${i}" data-series="${esc(seriesId)}">預覽原圖</button></article>`:`<button class="furniture-card furniture-series-button" data-series="${esc(x.seriesId)}">${furnitureImageHtmlV610(x.previewImage,x.name)}<h3>${esc(x.name)}</h3><p>${Number(x.itemCount)||0} 件家具</p></button>`).join('')||'<p class="furniture-empty">目前沒有已啟用的家具。請老師在家具設定中加入系列與素材。</p>'}</div><div id="furniturePreviewV610"></div>`;
+    root.querySelectorAll('.furniture-series-button').forEach(btn=>btn.onclick=()=>renderFurnitureV610(btn.dataset.series));
+    root.querySelectorAll('.furniture-preview-button').forEach(btn=>btn.onclick=()=>previewFurnitureV610(btn.dataset.series,Number(btn.dataset.index)));
+    activateFurnitureImagesV610();
+  }catch(e){if(epoch===FURNITURE_VIEW_EPOCH_V610)root.innerHTML=`<p class="furniture-empty">${esc(e.message||e)}</p><button class="btn" onclick="renderFurnitureV610('',true)">重試</button>`;}
+}
+function previewFurnitureV610(seriesId,index){
+  const item=furnitureCacheClientV610().bySeries[seriesId]?.[index],root=document.getElementById('furniturePreviewV610');if(!item||!root)return;
+  root.innerHTML=`<section class="furniture-preview"><button class="btn gray" onclick="document.getElementById('furniturePreviewV610').innerHTML=''">關閉預覽</button><h3>${esc(item.name)}</h3>${furnitureImageHtmlV610(item.image,item.name)}</section>`;
+  // Full asset is assigned only after an explicit preview click, never as thumbnail fallback.
+  const image=root.querySelector('[data-furniture-src]');if(image){image.src=image.dataset.furnitureSrc;delete image.dataset.furnitureSrc;}
+  root.scrollIntoView({behavior:'smooth',block:'nearest'});
+}
 const BUILTIN_LAND_BACKGROUNDS = {
   'LAND001': 'assets/maps/grassland.png',
   'LAND002': 'assets/maps/forest.png',
@@ -831,10 +928,14 @@ function cleanupBattleViewV600_(){
 }
 function battleControlsV600_(){return document.getElementById('battleControls')||panel;}
 function switchMainMode(mode){
-  const next=['home','battle','upgrade'].includes(mode)?mode:'home';
+  const next=['home','battle','upgrade','furniture'].includes(mode)?mode:'home';
   if(mainMode==='battle' && next!=='battle')cleanupBattleViewV600_();
+  if(mainMode==='furniture' && next!=='furniture')cleanupFurnitureViewV610();
   mainMode=next;
   document.getElementById('studentLayout')?.classList.toggle('battle-mode',mainMode==='battle');
+  document.getElementById('studentLayout')?.classList.toggle('furniture-mode',mainMode==='furniture');
+  document.getElementById('furnitureMain')?.classList.toggle('hidden',mainMode!=='furniture');
+  if(mainMode==='furniture'){clearInterval(wanderTimer);wanderTimer=null;}
   const y=document.getElementById('yard'),b=document.getElementById('battleMain');
   if(y)y.classList.toggle('hidden',mainMode!=='home');
   if(b)b.classList.toggle('hidden',mainMode!=='battle');
@@ -992,8 +1093,8 @@ function wanderPets(){
 }
 
 function petTalk(p,el){document.querySelectorAll('.bubble').forEach(x=>x.remove());const b=document.createElement('div');b.className='bubble';b.textContent=p.dialogs[Math.floor(Math.random()*p.dialogs.length)];b.style.left=(el.offsetLeft+el.offsetWidth/2)+'px';b.style.top=el.offsetTop+'px';yard.appendChild(b);setTimeout(()=>b.remove(),2400);}
-function switchTab(tab,btn){currentTab=tab;if(tab==='challenge')challenge.active=false;if(tab==='upgrade')switchMainMode('upgrade');else if(tab!=='challenge')switchMainMode('home');document.querySelectorAll('.tabbtn').forEach(x=>x.classList.remove('active'));btn?.classList.add('active');renderCurrentTab();}
-async function renderCurrentTab(){if(currentTab==='home')renderHome();if(currentTab==='upgrade')await renderUpgrade();if(currentTab==='bag')await renderBag();if(currentTab==='challenge'){if(challenge.active){switchMainMode('battle');renderBattle();}else renderChallengeHome();}if(currentTab==='mail')await renderMail();if(currentTab==='shop')await renderShop();}
+function switchTab(tab,btn){currentTab=tab;if(tab==='challenge')challenge.active=false;if(tab==='upgrade'||tab==='furniture')switchMainMode(tab);else if(tab!=='challenge')switchMainMode('home');document.querySelectorAll('.tabbtn').forEach(x=>x.classList.remove('active'));btn?.classList.add('active');renderCurrentTab();}
+async function renderCurrentTab(){if(currentTab==='home')renderHome();if(currentTab==='upgrade')await renderUpgrade();if(currentTab==='furniture')await renderFurnitureV610();if(currentTab==='bag')await renderBag();if(currentTab==='challenge'){if(challenge.active){switchMainMode('battle');renderBattle();}else renderChallengeHome();}if(currentTab==='mail')await renderMail();if(currentTab==='shop')await renderShop();}
 function renderHome(){
   const petsHere=state.pets.filter(p=>String(p.landId)===String(state.activeLandId));
   const ownedBgs=(state.backgrounds||[]).map(id=>liveLandById(id)).filter(Boolean);
@@ -1076,11 +1177,12 @@ function renderStoneModeV600(){
   const root=document.getElementById('stoneModeContent'),pet=state.pets.find(p=>p.petId===upPet.value);if(!root||!pet)return;
   const attribute=getPetAttribute(pet),skills=getConfiguredPetSkills(pet),pending=readStonePendingV600();
   const stone=STONE_CATALOG_V600.find(x=>x.attribute===attribute),quantity=stone?inventoryQty(stone.itemId):0;
-  root.innerHTML=`<h3>💎 ${esc(attribute)}之石</h3><p>每顆永久增加 <b>${esc(stone?.increment||'5')}</b> 傷害，每次只強化一個技能。</p><p class="stone-balance">持有 ${quantity} 顆 · 強化可以持續累積</p>
+  root.innerHTML=`<h3>${itemImageHtmlV610(stone?.itemId,{},48)} ${esc(attribute)}之石</h3><p>每顆永久增加 <b>${esc(stone?.increment||'5')}</b> 傷害，每次只強化一個技能。</p><p class="stone-balance">持有 ${quantity} 顆 · 強化可以持續累積</p>
   ${!UPGRADE_READY_V600?'<div class="itemcard">請老師先執行 setupOrUpgradeV600()。</div>':''}
   <div id="stoneRetryV610" class="itemcard" ${pending?'':'hidden'}><b>有一筆強化尚未確認完成</b><p>請重試原請求，確認前不會建立新強化。</p><button class="btn purple stone-retry" onclick="useStoneV600()">重試上次強化</button></div>
   <div class="upgrade-skills">${skills.map(s=>`<div class="upgrade-skill"><b>${esc(s.name)}</b><span class="skill-kind">${s.kind==='general'?'一般技能':s.kind==='special'?'30 級專屬技能':'屬性技能'}</span><p>基礎 ${s.baseDamage} + 強化 <span data-stone-bonus="${esc(s.id)}">${esc(s.bonusDamage)}</span> = <strong data-stone-final="${esc(s.id)}">${esc(s.finalDamage)}</strong></p><div class="row">${[1,5,10,'ALL'].map(q=>`<button class="btn purple stone-action" data-stone-quantity="${q}" ${!UPGRADE_READY_V600||!stone||quantity<(q==='ALL'?1:q)||pending||STONE_BUSY_V600?'disabled':''} onclick="useStoneV600('${esc(s.id)}','${q}')">${q==='ALL'?'全部使用':'使用 '+q+' 顆'}</button>`).join('')}</div></div>`).join('')}</div>
-  <details class="stone-catalog"><summary>查看 12 種屬性石</summary><div class="stone-catalog-grid">${STONE_CATALOG_V600.map(s=>`<div>${attributeIconHtml(s.attribute,20)} ${esc(s.name)} ×<span data-stone-stock="${esc(s.itemId)}">${inventoryQty(s.itemId)}</span></div>`).join('')}</div></details>`;
+  <details class="stone-catalog"><summary>查看 12 種屬性石</summary><div class="stone-catalog-grid">${STONE_CATALOG_V600.map(s=>`<div>${itemImageHtmlV610(s.itemId,{},32)} ${esc(s.name)} ×<span data-stone-stock="${esc(s.itemId)}">${inventoryQty(s.itemId)}</span></div>`).join('')}</div></details>`;
+  activateStoneSpritesV610();
 }
 function updateStoneViewV610(changedPet,changedSkill,changedItem){
   if(currentTab!=='upgrade'||UPGRADE_MODE_V600!=='stone')return;
@@ -1198,7 +1300,7 @@ async function useExp(itemId,btn){
     setExpBusyV5104(false);
   }
 }
-async function renderBag(){if(!Array.isArray(inventory)||!inventory.length)inventory=await gs('getInventory',currentId);panel.innerHTML=`<h3>🎒 我的道具</h3>${inventory.map(x=>`<div class="itemcard" style="min-height:86px">${x.config?.['圖片']?`<img src="${esc(x.config['圖片'])}" style="width:76px;height:76px;object-fit:contain;float:left;margin-right:10px">`:''}<b>${esc(x.config?.['名稱']||x.itemId)}</b> ×${x.quantity}<br><span class="small">${esc(x.config?.['類型']||'')}｜${esc(x.config?.['說明']||'')}</span><div style="clear:both"></div></div>`).join('')||'<div class="itemcard">背包目前是空的。</div>'}`;}
+async function renderBag(){if(!Array.isArray(inventory)||!inventory.length)inventory=await gs('getInventory',currentId);panel.innerHTML=`<h3>🎒 我的道具</h3>${inventory.map(x=>`<div class="itemcard" style="min-height:86px">${itemImageHtmlV610(x.itemId,x.config,76)} <b>${esc(x.config?.['名稱']||x.itemId)}</b> ×${x.quantity}<br><span class="small">${esc(x.config?.['類型']||'')}｜${esc(x.config?.['說明']||'')}</span><div style="clear:both"></div></div>`).join('')||'<div class="itemcard">背包目前是空的。</div>'}`;activateStoneSpritesV610();}
 async function ensureChallengeHomeMeta(){
   // V5.10.4：挑戰首頁不再掃描題庫。
   // 狀態已在登入後背景資料載入；題庫只在點進單一科目時載入。
@@ -1626,7 +1728,8 @@ async function renderMail(){
 }
 function renderMailFromCache(){
   const unclaimed=mailbox.filter(m=>!(m['是否領取']===true||String(m['是否領取']).toUpperCase()==='TRUE')).length;
-  panel.innerHTML=`<h3>📬 信箱</h3><div class="mail-actions"><button class="btn blue" ${unclaimed&&!MAIL_CLAIM_BUSY_V600?'':'disabled'} onclick="claimAllMailUI()">📦 一鍵收取全部（${unclaimed}）</button><button class="btn gray" ${MAIL_CLAIM_BUSY_V600?'disabled':''} onclick="refreshMailboxInBackground(true)">更新信箱</button></div>${mailbox.map(m=>`<div class="mailcard"><b>${esc(m['標題'])}</b><br><span class="small">寄件者：${esc(m['寄件者'])}</span><p>${esc(m['內容'])}</p>${m['附件ID']?`🎁 ${esc(m['附件名稱'])} ×${m['附件數量']}<br>`:''}<button class="btn ${m['是否領取']===true||String(m['是否領取']).toUpperCase()==='TRUE'?'gray':''}" ${(MAIL_CLAIM_BUSY_V600||m['是否領取']===true||String(m['是否領取']).toUpperCase()==='TRUE')?'disabled':''} onclick="claimMailUI('${m['信件ID']}')">${(m['是否領取']===true||String(m['是否領取']).toUpperCase()==='TRUE')?'已領取':'領取附件'}</button></div>`).join('')||'<div class="mailcard">目前沒有信件。</div>'}`;
+  panel.innerHTML=`<h3>📬 信箱</h3><div class="mail-actions"><button class="btn blue" ${unclaimed&&!MAIL_CLAIM_BUSY_V600?'':'disabled'} onclick="claimAllMailUI()">📦 一鍵收取全部（${unclaimed}）</button><button class="btn gray" ${MAIL_CLAIM_BUSY_V600?'disabled':''} onclick="refreshMailboxInBackground(true)">更新信箱</button></div>${mailbox.map(m=>`<div class="mailcard"><b>${esc(m['標題'])}</b><br><span class="small">寄件者：${esc(m['寄件者'])}</span><p>${esc(m['內容'])}</p>${m['附件ID']?`${itemImageHtmlV610(m['附件ID'],ITEM_CONFIGS[m['附件ID']]||{},32)} ${esc(m['附件名稱'])} ×${m['附件數量']}<br>`:''}<button class="btn ${m['是否領取']===true||String(m['是否領取']).toUpperCase()==='TRUE'?'gray':''}" ${(MAIL_CLAIM_BUSY_V600||m['是否領取']===true||String(m['是否領取']).toUpperCase()==='TRUE')?'disabled':''} onclick="claimMailUI('${m['信件ID']}')">${(m['是否領取']===true||String(m['是否領取']).toUpperCase()==='TRUE')?'已領取':'領取附件'}</button></div>`).join('')||'<div class="mailcard">目前沒有信件。</div>'}`;
+  activateStoneSpritesV610();
 }
 let MAIL_CLAIM_BUSY_V600=false;
 async function claimAllMailUI(){
@@ -1843,6 +1946,7 @@ async function useBackgroundFromShop(id){
   }
 }
 function logout(){
+  cleanupFurnitureViewV610();document.getElementById('studentLayout')?.classList.remove('furniture-mode');
   cleanupBattleViewV600_();challenge.active=false;
   document.getElementById('studentLayout')?.classList.remove('battle-mode');
   STUDENT_TOKEN_V600='';UPGRADE_AT_V600=0;UPGRADE_PET_V600='';UPGRADE_LOADING_V600=null;STONE_CATALOG_V600=[];UPGRADE_READY_V600=false;
@@ -1954,11 +2058,12 @@ function renderAdminBatchV610(){
   if(!adminData.items.some(x=>String(x['道具ID'])===ADMIN_BATCH_ITEM_V610))ADMIN_BATCH_ITEM_V610=String(adminData.items[0]?.['道具ID']||'');
   root.innerHTML=`<h3>👩‍🏫 全班批次發放</h3><div class="row"><button class="btn ${coins?'blue':'gray'} admin-batch-control" onclick="setAdminBatchModeV610('COINS')">批次發金幣</button><button class="btn ${coins?'gray':'purple'} admin-batch-control" onclick="setAdminBatchModeV610('ITEMS')">批次發道具</button></div>
     ${pending.map(p=>`<p class="admin-batch-pending"><b>有一筆發放尚未確認</b> · ${p.mode==='COINS'?'金幣':'道具'}<br><button class="btn orange admin-batch-retry" data-request-id="${esc(p.requestId)}" onclick="submitAdminBatchV610('${esc(p.requestId)}')">以原批次重試</button></p>`).join('')}
-    ${coins?'':`<p><label>道具 <select id="adminBatchItemV610" class="admin-batch-control" onchange="captureAdminBatchDraftV610();cancelAdminBatchV610()">${adminData.items.map(x=>`<option value="${esc(x['道具ID'])}" ${String(x['道具ID'])===ADMIN_BATCH_ITEM_V610?'selected':''}>${esc(x['名稱'])}</option>`).join('')}</select></label></p>`}
+    ${coins?'':`<p><span id="adminItemPreviewV610"></span> <label>道具 <select id="adminBatchItemV610" class="admin-batch-control" onchange="captureAdminBatchDraftV610();cancelAdminBatchV610();renderAdminItemPreviewV610()">${adminData.items.map(x=>`<option value="${esc(x['道具ID'])}" ${String(x['道具ID'])===ADMIN_BATCH_ITEM_V610?'selected':''}>${esc(x['名稱'])}</option>`).join('')}</select></label></p>`}
     <div class="row" style="margin-top:10px">${(coins?[100]:[1,5]).map(n=>`<button class="btn secondary admin-batch-control" onclick="fillAdminBatchV610(${n})">全班填入 ${n}</button>`).join('')}<button class="btn gray admin-batch-control" onclick="fillAdminBatchV610(0)">全部清空</button></div>
     <p class="small">發放數值會加到既有資產；0 或空白代表略過。每位學生可以填不同數值。</p>
     <div style="overflow:auto"><table class="admin-table"><thead><tr><th>座號</th><th>學號</th><th>${coins?'金額':'數量'}</th></tr></thead><tbody>${students.map(s=>`<tr><td>${esc(String(s.seat||'').padStart(2,'0'))}</td><td>${esc(s.id)}<br><span class="small">${esc(s.name)}</span></td><td><input type="number" min="0" step="1" inputmode="numeric" class="admin-batch-value admin-batch-control" data-student="${esc(s.id)}" value="${esc(ADMIN_BATCH_DRAFT_V610[mode][s.id]??'0')}" style="width:90px" oninput="captureAdminBatchDraftV610();cancelAdminBatchV610()"></td></tr>`).join('')}</tbody></table></div>
     <button class="btn purple admin-batch-control" style="margin-top:12px" onclick="previewAdminBatchV610()">確認批次發放</button><div id="adminBatchReviewV610"></div><div id="adminBatchResultV610" style="margin-top:10px"></div>`;
+  renderAdminItemPreviewV610();
   setAdminBatchBusyV610(ADMIN_BATCH_BUSY_V610);showAdminBatchResultV610(ADMIN_BATCH_RESULT_V610);
 }
 function setAdminBatchBusyV610(busy){

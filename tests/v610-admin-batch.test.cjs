@@ -5,7 +5,8 @@ const previous=vm.createContext({});vm.runInContext(execFileSync('git',['show','
 for(const name of ['getUpgradeBundleV600','useAttributeStoneV600','useAttributeStonesBatchV610','setupOrUpgradeV610','randomGift_','hourlyPetGiftV600_','claimMailsLockedV600_','syncChallengeBatch','getBattleProgressV5105','saveBattleProgressV5105'])assert.equal(context[name].toString().replace(/\r\n/g,'\n'),previous[name].toString().replace(/\r\n/g,'\n'),name+' outside Phase 2 unchanged');
 const ui=vm.createContext({localStorage:{getItem:()=>null},sessionStorage:{getItem:()=>null},window:{}}),oldUI=vm.createContext({localStorage:{getItem:()=>null},sessionStorage:{getItem:()=>null},window:{}});
 vm.runInContext(frontend,ui);vm.runInContext(execFileSync('git',['show','399dab7:app.js'],{encoding:'utf8'}),oldUI);
-for(const name of ['renderUpgrade','renderStoneModeV600','useStoneV600','applyStoneResultV610','updateStoneViewV610','getConfiguredPetSkills','renderBattle','renderBattleQuestion'])assert.equal(ui[name].toString().replace(/\r\n/g,'\n'),oldUI[name].toString().replace(/\r\n/g,'\n'),name+' UI unchanged');
+// Phase 3 intentionally replaces stone artwork; mutation and battle behavior stay pinned.
+for(const name of ['renderUpgrade','useStoneV600','applyStoneResultV610','updateStoneViewV610','getConfiguredPetSkills','renderBattle','renderBattleQuestion'])assert.equal(ui[name].toString().replace(/\r\n/g,'\n'),oldUI[name].toString().replace(/\r\n/g,'\n'),name+' UI unchanged');
 let valueReads=0,commits=0;
 const column=name=>[...name].reduce((n,c)=>n*26+c.charCodeAt(0)-64,0);
 context.Sheets.Spreadsheets.Values={batchGet(_id,{ranges}){

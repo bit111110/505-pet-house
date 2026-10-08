@@ -17,6 +17,7 @@ const SHEETS = {
   LANDS: '土地設定',
   STUDENT_LANDS: '學生土地',
   FURNITURE: '家具設定',
+  FURNITURE_SERIES: '家具系列',
   STUDENT_FURNITURE: '學生家具',
   REWARDS: '獎勵紀錄',
   ITEM_CONFIG: '道具設定',
@@ -37,6 +38,83 @@ const STAGE1_FOLDER_ID = '12J1m_ERknyuvTEYqtw2-tdpy2oU0wwFs';
 const STAGE2_FOLDER_ID = '1OoOsmcvHpz3iDtyIpN7U7xNRAotuN9E2';
 const STAGE3_FOLDER_ID = '14CO9SiK-VJO06B11VXBQUOgbWKxwyGYf';
 
+// V6.1 Phase 3: public, read-only furniture catalogs; ownership stays in 學生家具.
+const STONE_SPRITE_PATH_V610='assets/items/stones/attribute-stones.png';
+const LEGACY_FURNITURE_SERIES_V610='LEGACY';
+function enabledFurnitureV610_(value){return value!==false&&String(value).toUpperCase()!=='FALSE';}
+function furnitureImagePathV610_(value){
+  const path=String(value||'').trim().replace(/\\/g,'/');
+  return /^(?:https?:\/\/|assets\/)/i.test(path)?path:'';
+}
+function furnitureColumnV610_(sh,hm,name){
+  const n=sh?sh.getLastRow()-1:0;
+  return n>0&&hm[name]?sh.getRange(2,hm[name],n,1).getValues().map(r=>r[0]):Array(Math.max(0,n)).fill('');
+}
+function furnitureRevisionV610_(){return CacheService.getScriptCache().get('FURN_REV_V610')||'0';}
+function clearFurnitureCacheV610_(){CacheService.getScriptCache().put('FURN_REV_V610',Utilities.getUuid(),21600);}
+function furnitureCacheV610_(key,loader,refresh){
+  const c=CacheService.getScriptCache();
+  if(!refresh){try{const saved=c.get(key);if(saved)return JSON.parse(saved);}catch(e){}}
+  const result=loader();
+  try{const json=JSON.stringify(result);if(json.length<90000)c.put(key,json,600);}catch(e){}
+  return result;
+}
+function furnitureSeriesMetadataV610_(){
+  const ss=SpreadsheetApp.getActive(),sh=ss.getSheetByName(SHEETS.FURNITURE_SERIES);
+  const series=[];
+  if(sh&&sh.getLastRow()>1){
+    const hm=headerMapFast_(sh),rows=sh.getRange(2,1,sh.getLastRow()-1,sh.getLastColumn()).getValues();
+    rows.forEach(r=>{const id=String(r[hm['系列ID']-1]||'').trim();if(id&&enabledFurnitureV610_(r[hm['是否啟用']-1]))series.push({seriesId:id,name:String(r[hm['系列名稱']-1]||id),previewImage:furnitureImagePathV610_(r[hm['預覽圖片']-1]),itemCount:0,sort:Number(r[hm['排序']-1]||0)});});
+  }
+  // Home reads only identifiers and visibility, never furniture image/metadata columns.
+  const cfg=ss.getSheetByName(SHEETS.FURNITURE),hm=cfg?headerMapFast_(cfg):{};
+  const ids=furnitureColumnV610_(cfg,hm,'家具ID'),groups=furnitureColumnV610_(cfg,hm,'系列ID'),open=furnitureColumnV610_(cfg,hm,'是否開放');
+  const counts=Object.create(null);ids.forEach((id,i)=>{if(id&&enabledFurnitureV610_(open[i])){const group=String(groups[i]||LEGACY_FURNITURE_SERIES_V610).trim();counts[group]=(counts[group]||0)+1;}});
+  if(counts[LEGACY_FURNITURE_SERIES_V610]&&!series.some(x=>x.seriesId===LEGACY_FURNITURE_SERIES_V610)&&!sh)series.push({seriesId:LEGACY_FURNITURE_SERIES_V610,name:'既有裝飾',previewImage:'',itemCount:0,sort:999});
+  return series.map(s=>({...s,itemCount:counts[s.seriesId]||0})).sort((a,b)=>a.sort-b.sort||a.seriesId.localeCompare(b.seriesId));
+}
+function getFurnitureSeriesV610(forceRefresh){
+  if(forceRefresh===true)clearFurnitureCacheV610_();
+  return furnitureCacheV610_('FURN_HOME_V610:'+furnitureRevisionV610_(),()=>({ok:true,series:furnitureSeriesMetadataV610_()}),forceRefresh===true);
+}
+function getFurnitureBySeriesV610(seriesId,forceRefresh){
+  const id=String(seriesId||'').trim();if(!id||id.length>80)throw new Error('請指定家具系列');
+  return furnitureCacheV610_('FURN_GROUP_V610:'+furnitureRevisionV610_()+':'+encodeURIComponent(id),()=>{
+    const series=getFurnitureSeriesV610().series.find(s=>s.seriesId===id);if(!series)throw new Error('系列不存在或未啟用');
+    const sh=SpreadsheetApp.getActive().getSheetByName(SHEETS.FURNITURE),items=[];
+    if(!sh)return {ok:true,series,items};
+    const hm=headerMapFast_(sh),groups=furnitureColumnV610_(sh,hm,'系列ID');
+    // Read matching contiguous row ranges only, not other series' image metadata.
+    for(let i=0;i<groups.length;){
+      if(String(groups[i]||LEGACY_FURNITURE_SERIES_V610).trim()!==id){i++;continue;}
+      const start=i++;while(i<groups.length&&String(groups[i]||LEGACY_FURNITURE_SERIES_V610).trim()===id)i++;
+      sh.getRange(start+2,1,i-start,sh.getLastColumn()).getValues().forEach(r=>{
+        const furnitureId=String(r[hm['家具ID']-1]||'');if(!furnitureId||!enabledFurnitureV610_(r[hm['是否開放']-1]))return;
+        items.push({furnitureId,seriesId:id,name:String(r[hm['名稱']-1]||furnitureId),type:String(r[hm['類型']-1]||'地面型'),thumbnail:furnitureImagePathV610_(r[hm['縮圖路徑']-1]),image:furnitureImagePathV610_(r[hm['圖片']-1]),price:Number(r[hm['價格']-1]||0),sort:Number(r[hm['排序']-1]||0)});
+      });
+    }
+    return {ok:true,series,items:items.sort((a,b)=>a.sort-b.sort||a.furnitureId.localeCompare(b.furnitureId))};
+  },forceRefresh===true);
+}
+function setupOrUpgradeV610Phase3(){
+  // Existing V6 setup already handles partially completed stone creation safely.
+  setupOrUpgradeV600();
+  const lock=LockService.getScriptLock();lock.waitLock(10000);
+  try{
+    const series=ensureSheet_(SHEETS.FURNITURE_SERIES,['系列ID','系列名稱','預覽圖片','排序','是否啟用']);
+    const furniture=ensureSheet_(SHEETS.FURNITURE,['家具ID','名稱','價格','圖片','類型','是否開放','系列ID','縮圖路徑','排序']);
+    const hm=headerMapFast_(furniture),groups=furnitureColumnV610_(furniture,hm,'系列ID'),ids=furnitureColumnV610_(furniture,hm,'家具ID');
+    const known=new Set(furnitureColumnV610_(series,headerMapFast_(series),'系列ID').map(String));
+    const needed=new Set(ids.map((id,i)=>id?String(groups[i]||LEGACY_FURNITURE_SERIES_V610).trim():'').filter(Boolean));
+    needed.forEach(id=>{if(!known.has(id))appendObject_(series,{'系列ID':id,'系列名稱':id===LEGACY_FURNITURE_SERIES_V610?'既有裝飾':id,'預覽圖片':'','排序':999,'是否啟用':true});});
+    const types=Array.from(new Set(['地面型','浮空型',...furnitureColumnV610_(furniture,hm,'類型').map(String).filter(Boolean)]));
+    if(furniture.getMaxRows()>1)furniture.getRange(2,hm['類型'],furniture.getMaxRows()-1,1).setDataValidation(SpreadsheetApp.newDataValidation().requireValueInList(types,true).setAllowInvalid(false).build());
+    const items=SpreadsheetApp.getActive().getSheetByName(SHEETS.ITEM_CONFIG),ih=headerMapFast_(items),stones=new Set(ATTRIBUTE_STONES_V600.map(s=>s.itemId));
+    furnitureColumnV610_(items,ih,'道具ID').forEach((id,i)=>{if(stones.has(String(id))&&String(items.getRange(i+2,ih['圖片']).getValue())!==STONE_SPRITE_PATH_V610)items.getRange(i+2,ih['圖片']).setValue(STONE_SPRITE_PATH_V610);});
+    clearAllGameConfigCacheV598_();
+    return {ok:true,message:'石頭共用 sprite 與家具系列結構已補齊；既有學生資料未變更'};
+  }finally{lock.releaseLock();}
+}
 function doGet(e) { return apiJson_({apiOk:true,message:'PetHouse API V5.9.8 is alive'}); }
 
 function getAppVersion(){ return APP_VERSION; }
@@ -1352,12 +1430,13 @@ function ensurePlotData_(studentId){
   const bgs=readObjects_(bs).filter(x=>String(x['學號']).trim()===id);if(!bgs.some(x=>String(x['背景ID'])==='LAND001'))appendObject_(bs,{'學號':id,'背景ID':'LAND001','是否擁有':true,'購買時間':new Date()});
   plots=readObjects_(ps).filter(x=>String(x['學號']).trim()===id);if(plots.length&&!plots.some(x=>x['是否使用']===true||String(x['是否使用']).toUpperCase()==='TRUE')){const hm=headerMap_(ps),vals=ps.getDataRange().getValues();for(let i=1;i<vals.length;i++)if(String(vals[i][hm['學號']-1]).trim()===id){ps.getRange(i+1,hm['是否使用']).setValue(true);break;}}
 }
-function getStudentCoreStateV55_(studentId){
+function getStudentCoreStateV55_(studentId,includeFurniture=true){
   const id=String(studentId||'').trim();ensureStudentReadyFast_(id);const ss=SpreadsheetApp.getActive(),student=getStudent_(id);if(!student)return {ok:false,message:'找不到學生'};
   const petCfg=cachedObjects_(SHEETS.PET_CONFIG,300),cfgMap={};petCfg.forEach(x=>cfgMap[String(x['寵物ID'])]=x);const pets=readObjects_(ss.getSheetByName(SHEETS.PETS)).filter(x=>String(x['學號']).trim()===id).map(p=>decoratePet_(p,cfgMap[String(p['寵物ID'])]||{}));
   const bgCfg=cachedObjects_(SHEETS.LANDS,300),bgMap={};bgCfg.forEach(x=>bgMap[String(x['土地ID'])]=x);let plots=readObjects_(ss.getSheetByName(SHEETS.STUDENT_PLOTS)).filter(x=>String(x['學號']).trim()===id);const active=plots.find(x=>x['是否使用']===true||String(x['是否使用']).toUpperCase()==='TRUE')||plots[0];const activeLandId=active?String(active['土地格ID']):'SLOT001';const lands=plots.map(x=>({'學號':id,'土地ID':String(x['土地格ID']),'土地序號':Number(x['土地序號']||1),'背景ID':String(x['背景ID']||'LAND001'),'是否使用':x['是否使用'],config:bgMap[String(x['背景ID']||'LAND001')]||{}}));
   const backgrounds=readObjects_(ss.getSheetByName(SHEETS.STUDENT_BACKGROUNDS)).filter(x=>String(x['學號']).trim()===id&&x['是否擁有']!==false).map(x=>String(x['背景ID']));
-  const fMap=cachedMap_(SHEETS.FURNITURE,'家具ID',300);const furniture=readObjects_(ss.getSheetByName(SHEETS.STUDENT_FURNITURE)).filter(x=>String(x['學號']).trim()===id&&String(x['土地ID']||'SLOT001')===activeLandId).map(x=>({...x,config:fMap[String(x['家具ID'])]||{}}));
+  let furniture=[];
+  if(includeFurniture){const fMap=cachedMap_(SHEETS.FURNITURE,'家具ID',300);furniture=readObjects_(ss.getSheetByName(SHEETS.STUDENT_FURNITURE)).filter(x=>String(x['學號']).trim()===id&&String(x['土地ID']||'SLOT001')===activeLandId).map(x=>({...x,config:fMap[String(x['家具ID'])]||{}}));}
   return safeForClient_({ok:true,version:APP_VERSION,student,pets,lands,backgrounds,activeLandId,furniture,unreadMail:0,challengeStatus:{},skillEnhancements:getSkillEnhancementsV600_(id)});
 }
 function getStudentStateV55(studentId){
@@ -2084,6 +2163,7 @@ function getStaticCatalogBundleV597(){ return getStaticCatalogBundleV598(false);
 
 function clearAllGameConfigCacheV598_(){
   const c=CacheService.getScriptCache();
+  clearFurnitureCacheV610_();
 
   // cachedObjects_ 使用的 Sheet 設定快取
   [
@@ -2445,7 +2525,7 @@ function setupOrUpgradeV5100(){
 function getPostLoginBundleV5101(studentId){
   const id=String(studentId||'').trim();
   return safeForClient_({
-    core:getStudentCoreStateV55_(id),
+    core:getStudentCoreStateV55_(id,false),
     runtime:{
       inventory:getInventory(id)
     },
@@ -2849,6 +2929,8 @@ function doPost(e) {
       getUpgradeBundleV600: getUpgradeBundleV600,
       useAttributeStoneV600: useAttributeStoneV600,
       useAttributeStonesBatchV610: useAttributeStonesBatchV610,
+      getFurnitureSeriesV610: getFurnitureSeriesV610,
+      getFurnitureBySeriesV610: getFurnitureBySeriesV610,
       getMailbox: getMailbox,
       getMailboxFresh: getMailboxFresh,
       claimMail: claimMail,
