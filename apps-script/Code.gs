@@ -382,11 +382,14 @@ function getInventory(studentId){
 
 function grantItem(studentId,itemId,quantity,reason){
   if(attributeStoneV600_(itemId)){grantAttributeStonesV600_([studentId],itemId,quantity,reason);return true;}
+  return assetWriteLockV610_(()=>{
   quantity=Math.max(1,Number(quantity||1));
-  addItem_(String(studentId).trim(),String(itemId),quantity);
+  assertNoPendingStoneMailV600_(String(studentId).trim(),String(itemId));
+  addItem_LockedMailV600_(String(studentId).trim(),String(itemId),quantity);
   const s=getStudent_(studentId);
   SpreadsheetApp.getActive().getSheetByName(SHEETS.REWARDS).appendRow([new Date(),studentId,s?s.name:'',0,0,(reason||'老師發放')+'：'+itemId+' ×'+quantity]);
   return true;
+  });
 }
 
 function addItem_(studentId,itemId,qty){
@@ -461,6 +464,7 @@ function claimMailFast(studentId,mailId){
 function claimMail(studentId,mailId){return claimMailFast(studentId,mailId);}
 function mailClaimedV600_(mail){return mail['是否領取']===true || String(mail['是否領取']).toUpperCase()==='TRUE';}
 function assertNoPendingStoneMailV600_(studentId,itemId,exceptMailId,rows){
+  assertNoPendingAdminGrantV610_(studentId,'ITEMS',itemId);
   const mails=rows||readObjects_(SpreadsheetApp.getActive().getSheetByName(SHEETS.MAILBOX));
   const pending=mails.some(m=>{
     if(String(m['學號']).trim()!==studentId||String(m['附件ID'])!==itemId||String(m['信件ID'])===String(exceptMailId||'')||mailClaimedV600_(m)||!m['領取交易'])return false;
@@ -745,8 +749,11 @@ function buyLand(studentId,landId){
   spendCoins_(id,Number(item['價格']||0)); appendObject_(sl,{'學號':id,'土地ID':landId,'是否擁有':true,'購買時間':new Date(),'是否使用':false}); return getStudentState(id);
 }
 function spendCoins_(studentId,amount){
+  return assetWriteLockV610_(()=>{
+  assertNoPendingAdminGrantV610_(String(studentId).trim(),'COINS');
   const f=findStudentRow_(studentId); if(!f) throw new Error('找不到學生');
   const now=Number(f.obj['金幣']||0); if(now<amount) throw new Error('金幣不足'); f.sheet.getRange(f.row,f.hm['金幣']).setValue(now-amount);
+  });
 }
 
 
@@ -992,9 +999,12 @@ function getAdminData(){
   return {students,items,pets};
 }
 function addCoins(studentId,amount,reason){
+  return assetWriteLockV610_(()=>{
+  assertNoPendingAdminGrantV610_(String(studentId).trim(),'COINS');
   const f=findStudentRow_(studentId); if(!f) throw new Error('找不到學生');
   f.sheet.getRange(f.row,f.hm['金幣']).setValue(Number(f.obj['金幣']||0)+Number(amount||0));
   SpreadsheetApp.getActive().getSheetByName(SHEETS.REWARDS).appendRow([new Date(),studentId,f.obj['姓名'],Number(amount||0),0,reason||'老師發放']); return true;
+  });
 }
 function assignPetToStudent(studentId,petId){
   const sh=SpreadsheetApp.getActive().getSheetByName(SHEETS.PETS), id=String(studentId).trim();
@@ -1414,6 +1424,7 @@ function buyBackgroundFast(studentId,bgId){
       return {ok:true,alreadyOwned:true,coins:Number(s?.coins||0),backgrounds:bgRows.filter(x=>String(x['學號']).trim()===id&&x['是否擁有']!==false).map(x=>String(x['背景ID']))};
     }
 
+    assertNoPendingAdminGrantV610_(id,'COINS');
     const stuSh=ss.getSheetByName(SHEETS.STUDENTS),hm=headerMap_(stuSh),vals=stuSh.getDataRange().getValues();
     for(let i=1;i<vals.length;i++){
       if(String(vals[i][hm['學號']-1]).trim()===id){
@@ -2125,6 +2136,8 @@ function setupOrUpgradeV598(){
 /** ======================== V5.9.9 TEACHER / BATCH ======================== */
 function adminAddCoinsFastV599(password,studentId,amount,reason){
   verifyAdminPassword_(password);
+  return assetWriteLockV610_(()=>{
+  assertNoPendingAdminGrantV610_(String(studentId).trim(),'COINS');
   const n=Math.max(1,Number(amount||0));
   const f=findStudentRow_(studentId);if(!f)throw new Error('找不到學生');
   const newCoins=Number(f.obj['金幣']||0)+n;
@@ -2132,6 +2145,155 @@ function adminAddCoinsFastV599(password,studentId,amount,reason){
   SpreadsheetApp.getActive().getSheetByName(SHEETS.REWARDS)
     .appendRow([new Date(),studentId,f.obj['姓名'],n,0,reason||'老師發放']);
   return {ok:true,coins:newCoins};
+  });
+}
+
+/** V6.1 Phase 2：沿用獎勵紀錄作為永久批次收據，不建立另一套資產表。 */
+const ADMIN_BATCH_HEADERS_V610=['老師批次ID','老師批次內容','老師批次狀態','老師批次結果'];
+function setupAdminBatchV610(){
+  const lock=LockService.getScriptLock();lock.waitLock(12000);
+  try{
+    ensureSheet_(SHEETS.REWARDS,['時間','學號','姓名','金幣變動','EXP變動','原因'].concat(ADMIN_BATCH_HEADERS_V610));
+    CacheService.getScriptCache().remove('ADMIN_PENDING_V610');
+    return '老師批次發放欄位已補齊；未發放或重設任何資產';
+  }finally{lock.releaseLock();}
+}
+// 已持鎖的商店與舊 API 不重複取鎖；舊單人發金幣亦與批次共用鎖。
+function assetWriteLockV610_(work){
+  const lock=LockService.getScriptLock(),owned=lock.hasLock();
+  if(!owned)lock.waitLock(12000);
+  try{return work();}finally{if(!owned){try{SpreadsheetApp.flush();}finally{lock.releaseLock();}}}
+}
+function pendingAdminGrantsV610_(){
+  const cache=CacheService.getScriptCache();if(cache.get('ADMIN_PENDING_V610')==='NONE')return [];
+  const sh=SpreadsheetApp.getActive().getSheetByName(SHEETS.REWARDS),hm=sh?headerMap_(sh):{};
+  if(!hm['老師批次狀態']||sh.getLastRow()<2)return [];
+  const states=sh.getRange(2,hm['老師批次狀態'],sh.getLastRow()-1,1).getValues(),pending=[];
+  states.forEach((r,i)=>{if(r[0]==='SUBMITTED'){
+    const row=rowObject_(sh,sh.getRange(i+2,1,1,sh.getLastColumn()).getValues()[0]);
+    pending.push({requestId:String(row['老師批次ID']),payload:JSON.parse(String(row['老師批次內容'])),result:JSON.parse(String(row['老師批次結果']))});
+  }});
+  if(!pending.length)cache.put('ADMIN_PENDING_V610','NONE',300);
+  return pending;
+}
+function assertNoPendingAdminGrantV610_(studentId,mode,itemId){
+  if(pendingAdminGrantsV610_().some(p=>p.payload.mode===mode&&(mode!=='ITEMS'||p.payload.itemId===String(itemId))&&p.result.results.some(r=>r.ok&&!r.skipped&&r.studentId===studentId)))throw new Error('老師批次發放尚未確認；請先重試原批次，確認前不能變更同一資產');
+}
+function adminBatchReceiptV610_(sh,hm,requestId){
+  if(sh.getLastRow()<2)return null;
+  const ids=sh.getRange(2,hm['老師批次ID'],sh.getLastRow()-1,1).getValues();
+  const index=ids.findIndex(r=>String(r[0])===requestId);
+  return index<0?null:{...rowObject_(sh,sh.getRange(index+2,1,1,sh.getLastColumn()).getValues()[0]),_row:index+2};
+}
+function adminColumnNameV610_(number){let out='';while(number>0){number--;out=String.fromCharCode(65+number%26)+out;number=Math.floor(number/26);}return out;}
+// 必要欄位一次 Values.batchGet，不依學生逐一定位範圍。
+function adminReadColumnsV610_(sheets){
+  const specs=[],ranges=[];
+  sheets.forEach(({sh,keys})=>{
+    const hm=headerMap_(sh),count=Math.max(0,sh.getLastRow()-1),spec={sh,hm,keys,count,start:ranges.length};specs.push(spec);
+    if(count)keys.forEach(key=>{if(!hm[key])throw new Error('缺少欄位：'+sh.name+' '+key);const col=adminColumnNameV610_(hm[key]);ranges.push("'"+sh.getName().replace(/'/g,"''")+"'!"+col+'2:'+col+(count+1));});
+  });
+  const values=ranges.length?Sheets.Spreadsheets.Values.batchGet(SpreadsheetApp.getActive().getId(),{ranges,valueRenderOption:'UNFORMATTED_VALUE'}).valueRanges:[];
+  return specs.map(spec=>({sh:spec.sh,hm:spec.hm,rows:Array.from({length:spec.count},(_,i)=>{
+    const row={_row:i+2};spec.keys.forEach((key,j)=>row[key]=values[spec.start+j]?.values?.[i]?.[0]??'');return row;
+  })}));
+}
+function adminRowsRequestV610_(sh,row,col,values){
+  return {updateCells:{start:{sheetId:sh.getSheetId(),rowIndex:row-1,columnIndex:col-1},rows:values.map(r=>({values:r.map(value=>({userEnteredValue:typeof value==='number'?{numberValue:value}:{stringValue:String(value)}}))})),fields:'userEnteredValue'}};
+}
+function adminChangeRequestsV610_(changes){
+  const groups=[];
+  changes.sort((a,b)=>a.sh.getSheetId()-b.sh.getSheetId()||a.col-b.col||a.row-b.row).forEach(c=>{
+    const last=groups[groups.length-1];
+    if(last&&last.sh===c.sh&&last.col===c.col&&last.row+last.values.length===c.row)last.values.push([c.value]);
+    else groups.push({sh:c.sh,row:c.row,col:c.col,values:[[c.value]]});
+  });
+  return groups.map(g=>adminRowsRequestV610_(g.sh,g.row,g.col,g.values));
+}
+function adminEnsureRowsV610_(sh,required){
+  const max=sh.getMaxRows();if(required>max)sh.insertRowsAfter(max,required-max);
+}
+function grantCoinsBatchV610(password,entries,requestId,reason){return grantAdminBatchV610_(password,'COINS','',entries,requestId,reason);}
+function grantItemsBatchV610(password,itemId,entries,requestId,reason){return grantAdminBatchV610_(password,'ITEMS',String(itemId||'').trim(),entries,requestId,reason);}
+function grantAdminBatchV610_(password,mode,itemId,entries,requestId,reason){
+  verifyAdminPassword_(password);
+  const rid=String(requestId||''),field=mode==='COINS'?'amount':'quantity';
+  if(!/^[A-Za-z0-9-]{16,100}$/.test(rid)||!Array.isArray(entries)||!entries.length||entries.length>100)return {ok:false,retryable:false,message:'批次編號或學生清單無效'};
+  const payload={mode,itemId,reason:String(reason||'老師批次發放').slice(0,200),entries:entries.map(r=>({studentId:String(r?.studentId||'').trim(),value:String(r?.[field]??'')}))},content=JSON.stringify(payload);
+  if(content.length>30000)return {ok:false,retryable:false,message:'批次內容過長'};
+  const lock=LockService.getScriptLock();lock.waitLock(12000);
+  try{
+    const ss=SpreadsheetApp.getActive(),rewards=ss.getSheetByName(SHEETS.REWARDS),rh=headerMap_(rewards);
+    if(ADMIN_BATCH_HEADERS_V610.some(h=>!rh[h]))return {ok:false,retryable:false,message:'請先執行 setupAdminBatchV610()'};
+    const existing=adminBatchReceiptV610_(rewards,rh,rid);
+    if(existing){
+      if(String(existing['老師批次內容'])!==content)return {ok:false,retryable:false,message:'同一 requestId 的內容不可變更'};
+      const result=JSON.parse(String(existing['老師批次結果']));
+      if(existing['老師批次狀態']==='COMMITTED')return {...result,replayed:true};
+      return adminUnconfirmedResultV610_(result);
+    }
+    if(pendingAdminGrantsV610_().length)return {ok:false,retryable:true,message:'請先確認上一筆老師批次；不會建立新的發放交易'};
+    requireMailSheetsServiceV600_();
+    const studentSheet=ss.getSheetByName(SHEETS.STUDENTS),itemSheet=ss.getSheetByName(SHEETS.STUDENT_ITEMS);
+    const specs=[{sh:studentSheet,keys:mode==='COINS'?['學號','姓名','金幣']:['學號','姓名']}];
+    if(mode==='ITEMS'){
+      specs.push({sh:itemSheet,keys:['學號','道具ID','數量']},{sh:ss.getSheetByName(SHEETS.MAILBOX),keys:['學號','信件ID','附件ID','附件數量','是否領取','領取交易']});
+      if(attributeStoneV600_(itemId))specs.push({sh:ss.getSheetByName(SHEETS.SKILL_ENHANCEMENTS),keys:['學號','狀態']});
+    }
+    const data=adminReadColumnsV610_(specs),students=new Map(),duplicates=new Set();
+    data[0].rows.forEach(r=>{const id=String(r['學號']).trim();if(students.has(id))duplicates.add(id);students.set(id,r);});
+    const counts=new Map();payload.entries.forEach(r=>counts.set(r.studentId,(counts.get(r.studentId)||0)+1));
+    const catalog=mode==='ITEMS'?cachedMap_(SHEETS.ITEM_CONFIG,'道具ID',300):{},inventory=new Map(),inventoryDuplicates=new Set();
+    if(mode==='ITEMS')data[1].rows.forEach(r=>{if(String(r['道具ID'])!==itemId)return;const id=String(r['學號']).trim();if(inventory.has(id))inventoryDuplicates.add(id);inventory.set(id,r);});
+    const now=Utilities.formatDate(new Date(),TZ,'yyyy/MM/dd HH:mm:ss'),results=[],changes=[],audit=[],newItems=[];
+    let nextItemRow=itemSheet.getLastRow()+1;
+    payload.entries.forEach(entry=>{
+      const id=entry.studentId,n=Number(entry.value),student=students.get(id);
+      const fail=reason=>results.push({studentId:id,ok:false,reason});
+      if(!id||counts.get(id)>1)return fail('學號空白或同批重複');
+      if(!student)return fail('學生不存在');if(duplicates.has(id))return fail('學生資料有重複學號');
+      if(!Number.isSafeInteger(n)||n<0)return fail('請輸入非負整數');
+      if(mode==='ITEMS'&&!catalog[itemId])return fail('道具不存在');
+      if(n===0){results.push({studentId:id,ok:true,skipped:true,[field]:0});return;}
+      try{
+        if(mode==='COINS'){
+          const before=Number(student['金幣']||0),after=before+n;
+          if(!Number.isSafeInteger(before)||before<0||!Number.isSafeInteger(after))throw new Error('金幣數量無效或超出儲存範圍');
+          changes.push({row:student._row,col:data[0].hm['金幣'],value:after,sh:studentSheet});
+          results.push({studentId:id,ok:true,amount:n,coins:after});audit.push([now,id,student['姓名'],n,0,payload.reason]);
+        }else{
+          if(inventoryDuplicates.has(id))throw new Error('道具庫存有重複列');
+          assertNoPendingStoneMailV600_(id,itemId,undefined,data[2].rows);
+          if(attributeStoneV600_(itemId)&&data[3].rows.some(r=>String(r['學號']).trim()===id&&r['狀態']==='PENDING'))throw new Error('學生有未完成的屬性石強化');
+          const item=inventory.get(id),before=Number(item?.['數量']||0),after=before+n;
+          if(!Number.isSafeInteger(before)||before<0||!Number.isSafeInteger(after))throw new Error('道具數量無效或超出儲存範圍');
+          const row=item?item._row:nextItemRow++;
+          if(!item){const values=Array(itemSheet.getLastColumn()).fill('');values[data[1].hm['學號']-1]=id;values[data[1].hm['道具ID']-1]=itemId;values[data[1].hm['數量']-1]=0;newItems.push(values);}
+          changes.push({row,col:data[1].hm['數量'],value:after,sh:itemSheet});
+          results.push({studentId:id,ok:true,quantity:n,itemId,remainingQuantity:after});audit.push([now,id,student['姓名'],0,0,payload.reason+'：'+itemId+' ×'+n]);
+        }
+      }catch(e){fail(e.message);}
+    });
+    const result={ok:true,requestId:rid,mode,itemId,successCount:results.filter(r=>r.ok&&!r.skipped).length,failedCount:results.filter(r=>!r.ok).length,skippedCount:results.filter(r=>r.skipped).length,results};
+    const receiptRow=rewards.getLastRow()+1,receipt=Array(rewards.getLastColumn()).fill('');
+    receipt[rh['時間']-1]=now;receipt[rh['原因']-1]='老師批次發放交易';receipt[rh['老師批次ID']-1]=rid;receipt[rh['老師批次內容']-1]=content;receipt[rh['老師批次狀態']-1]='SUBMITTED';receipt[rh['老師批次結果']-1]=JSON.stringify(result);
+    // 先保留新庫存列及稽核列，避免逾時 RPC 的固定列號覆蓋後續新增資料。
+    CacheService.getScriptCache().remove('ADMIN_PENDING_V610');
+    if(newItems.length){adminEnsureRowsV610_(itemSheet,nextItemRow-1);itemSheet.getRange(itemSheet.getLastRow()+1,1,newItems.length,itemSheet.getLastColumn()).setValues(newItems);}
+    const reservedAudit=audit.map(row=>{const values=Array(rewards.getLastColumn()).fill('');Object.entries({'時間':row[0],'學號':row[1],'姓名':row[2],'金幣變動':0,'EXP變動':0,'原因':'老師批次待確認：'+rid}).forEach(([key,value])=>values[rh[key]-1]=value);return values;});
+    adminEnsureRowsV610_(rewards,receiptRow+reservedAudit.length);
+    rewards.getRange(receiptRow,1,1+reservedAudit.length,rewards.getLastColumn()).setValues([receipt,...reservedAudit]);SpreadsheetApp.flush();
+    const requests=adminChangeRequestsV610_(changes);
+    if(audit.length){const rows=audit.map(row=>{const values=Array(rewards.getLastColumn()).fill('');Object.entries({'時間':row[0],'學號':row[1],'姓名':row[2],'金幣變動':row[3],'EXP變動':row[4],'原因':row[5]}).forEach(([key,value])=>values[rh[key]-1]=value);return values;});requests.push(adminRowsRequestV610_(rewards,receiptRow+1,1,rows));}
+    requests.push(mailCellRequestV600_(rewards,receiptRow,rh['老師批次狀態'],'COMMITTED'));
+    try{Sheets.Spreadsheets.batchUpdate({requests},ss.getId());}
+    catch(e){return adminUnconfirmedResultV610_(result);}
+    CacheService.getScriptCache().put('ADMIN_PENDING_V610','NONE',300);
+    return {...result,replayed:false};
+  }finally{lock.releaseLock();}
+}
+function adminUnconfirmedResultV610_(result){
+  return {...result,ok:false,retryable:true,status:'SUBMITTED',successCount:0,unconfirmedCount:result.successCount,message:'批次結果尚未確認，請用原 requestId 重試；未確認前不會重複發放',results:result.results.map(r=>r.ok&&!r.skipped?{...r,ok:null,status:'SUBMITTED',reason:'交易尚未確認'}:r)};
 }
 
 function adminGrantItemsBatchV599(password,studentIds,itemId,quantity,reason){
@@ -2703,6 +2865,8 @@ function doPost(e) {
       getAdminDataSecure: getAdminDataSecure,
       adminAddCoins: adminAddCoins,
       adminAddCoinsFastV599: adminAddCoinsFastV599,
+      grantCoinsBatchV610: grantCoinsBatchV610,
+      grantItemsBatchV610: grantItemsBatchV610,
       adminGrantItem: adminGrantItem,
       adminGrantItemFast: adminGrantItemFast,
       adminGrantItemsBatchV599: adminGrantItemsBatchV599,

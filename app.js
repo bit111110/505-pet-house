@@ -1,4 +1,4 @@
-const FRONTEND_BUILD='20261008-v610-stone-batch';
+const FRONTEND_BUILD='20261008-v610-admin-batch';
 const BUILTIN_LAND_BACKGROUNDS = {
   'LAND001': 'assets/maps/grassland.png',
   'LAND002': 'assets/maps/forest.png',
@@ -1883,6 +1883,7 @@ async function openAdmin(){
   }catch(e){alert('密碼錯誤或後台驗證失敗：'+(e.message||e));}
 }
 async function loadAdmin(){
+  if(ADMIN_BATCH_BUSY_V610)return;
   if(!adminPassword){logout();return;}
   adminData=await gs('getAdminDataSecure',adminPassword);
   const itemOpts=adminData.items.map(x=>`<option value="${x['道具ID']}">${esc(x['名稱'])}</option>`).join('');
@@ -1904,22 +1905,11 @@ async function loadAdmin(){
       <div id="diagSummary" style="margin-top:10px"></div>
       <div id="diagRecent" class="small" style="margin-top:8px"></div>
     </div>
-    <div class="bulk-admin-card">
-      <b>🎁 批量發放道具</b>
-      <div class="row" style="margin-top:8px">
-        <select id="bulkItem">${itemOpts}</select>
-        <input id="bulkItemQty" type="number" min="1" value="1" style="width:85px" title="數量">
-        <button class="btn secondary" onclick="toggleAllAdminStudents(true)">全選</button>
-        <button class="btn gray" onclick="toggleAllAdminStudents(false)">取消全選</button>
-        <button class="btn purple" onclick="adminBulkItem()">發給勾選學生</button>
-      </div>
-      <div class="small">先勾選下方學生，再一次發放；後端會批次寫入，不用一個一個等。</div>
-    </div>
+    <div id="adminBatchV610" class="bulk-admin-card"></div>
 
     <table class="admin-table">
-      <thead><tr><th>選</th><th>座號</th><th>學生</th><th>金幣</th><th>發獎勵</th></tr></thead>
+      <thead><tr><th>座號</th><th>學生</th><th>金幣</th><th>發獎勵</th></tr></thead>
       <tbody>${adminData.students.map(s=>`<tr>
-        <td><input class="admin-student-check" type="checkbox" value="${esc(s.id)}"></td>
         <td>${s.seat||''}</td>
         <td>${esc(s.name)}<br><span class="small">${esc(s.id)}</span></td>
         <td><span id="coin-${s.id}">${s.coins}</span></td>
@@ -1934,6 +1924,100 @@ async function loadAdmin(){
         </div></td>
       </tr>`).join('')}</tbody>
     </table>`;
+  renderAdminBatchV610();
+}
+let ADMIN_BATCH_MODE_V610='COINS',ADMIN_BATCH_BUSY_V610=false,ADMIN_BATCH_PREVIEW_V610=null;
+let ADMIN_BATCH_DRAFT_V610={COINS:{},ITEMS:{}},ADMIN_BATCH_ITEM_V610='',ADMIN_BATCH_RESULT_V610=null;
+const ADMIN_BATCH_PENDING_PREFIX_V610='petHouseAdminBatchV610:';
+function pendingAdminBatchClientV610(){
+  const rows=[];
+  for(let i=0;i<localStorage.length;i++){
+    const key=localStorage.key(i);if(!key?.startsWith(ADMIN_BATCH_PENDING_PREFIX_V610))continue;
+    const saved=JSON.parse(localStorage.getItem(key));
+    if(!saved||!/^[A-Za-z0-9-]{16,100}$/.test(saved.requestId)||!['COINS','ITEMS'].includes(saved.mode)||!Array.isArray(saved.entries))throw new Error('批次重試資料格式錯誤');
+    rows.push(saved);
+  }
+  return rows;
+}
+function captureAdminBatchDraftV610(){
+  document.querySelectorAll('.admin-batch-value').forEach(el=>ADMIN_BATCH_DRAFT_V610[ADMIN_BATCH_MODE_V610][el.dataset.student]=el.value);
+  const select=document.getElementById('adminBatchItemV610');if(select)ADMIN_BATCH_ITEM_V610=select.value;
+}
+function setAdminBatchModeV610(mode){
+  if(ADMIN_BATCH_BUSY_V610)return;captureAdminBatchDraftV610();ADMIN_BATCH_MODE_V610=mode==='ITEMS'?'ITEMS':'COINS';ADMIN_BATCH_PREVIEW_V610=null;renderAdminBatchV610();
+}
+function renderAdminBatchV610(){
+  const root=document.getElementById('adminBatchV610');if(!root||!adminData)return;
+  let pending=[];try{pending=pendingAdminBatchClientV610();}catch(e){root.textContent='無法讀取批次重試資料，請先檢查瀏覽器儲存空間。';return;}
+  const mode=ADMIN_BATCH_MODE_V610,coins=mode==='COINS';
+  const students=[...adminData.students].sort((a,b)=>Number(a.seat||999)-Number(b.seat||999)||String(a.id).localeCompare(String(b.id)));
+  if(!adminData.items.some(x=>String(x['道具ID'])===ADMIN_BATCH_ITEM_V610))ADMIN_BATCH_ITEM_V610=String(adminData.items[0]?.['道具ID']||'');
+  root.innerHTML=`<h3>👩‍🏫 全班批次發放</h3><div class="row"><button class="btn ${coins?'blue':'gray'} admin-batch-control" onclick="setAdminBatchModeV610('COINS')">批次發金幣</button><button class="btn ${coins?'gray':'purple'} admin-batch-control" onclick="setAdminBatchModeV610('ITEMS')">批次發道具</button></div>
+    ${pending.map(p=>`<p class="admin-batch-pending"><b>有一筆發放尚未確認</b> · ${p.mode==='COINS'?'金幣':'道具'}<br><button class="btn orange admin-batch-retry" data-request-id="${esc(p.requestId)}" onclick="submitAdminBatchV610('${esc(p.requestId)}')">以原批次重試</button></p>`).join('')}
+    ${coins?'':`<p><label>道具 <select id="adminBatchItemV610" class="admin-batch-control" onchange="captureAdminBatchDraftV610();cancelAdminBatchV610()">${adminData.items.map(x=>`<option value="${esc(x['道具ID'])}" ${String(x['道具ID'])===ADMIN_BATCH_ITEM_V610?'selected':''}>${esc(x['名稱'])}</option>`).join('')}</select></label></p>`}
+    <div class="row" style="margin-top:10px">${(coins?[100]:[1,5]).map(n=>`<button class="btn secondary admin-batch-control" onclick="fillAdminBatchV610(${n})">全班填入 ${n}</button>`).join('')}<button class="btn gray admin-batch-control" onclick="fillAdminBatchV610(0)">全部清空</button></div>
+    <p class="small">發放數值會加到既有資產；0 或空白代表略過。每位學生可以填不同數值。</p>
+    <div style="overflow:auto"><table class="admin-table"><thead><tr><th>座號</th><th>學號</th><th>${coins?'金額':'數量'}</th></tr></thead><tbody>${students.map(s=>`<tr><td>${esc(String(s.seat||'').padStart(2,'0'))}</td><td>${esc(s.id)}<br><span class="small">${esc(s.name)}</span></td><td><input type="number" min="0" step="1" inputmode="numeric" class="admin-batch-value admin-batch-control" data-student="${esc(s.id)}" value="${esc(ADMIN_BATCH_DRAFT_V610[mode][s.id]??'0')}" style="width:90px" oninput="captureAdminBatchDraftV610();cancelAdminBatchV610()"></td></tr>`).join('')}</tbody></table></div>
+    <button class="btn purple admin-batch-control" style="margin-top:12px" onclick="previewAdminBatchV610()">確認批次發放</button><div id="adminBatchReviewV610"></div><div id="adminBatchResultV610" style="margin-top:10px"></div>`;
+  setAdminBatchBusyV610(ADMIN_BATCH_BUSY_V610);showAdminBatchResultV610(ADMIN_BATCH_RESULT_V610);
+}
+function setAdminBatchBusyV610(busy){
+  ADMIN_BATCH_BUSY_V610=!!busy;
+  const pending=pendingAdminBatchClientV610();
+  document.querySelectorAll('#adminBatchV610 .admin-batch-control').forEach(el=>el.disabled=busy||pending.length>0);
+  document.querySelectorAll('#adminBatchV610 .admin-batch-retry').forEach(el=>el.disabled=busy);
+}
+function cancelAdminBatchV610(){
+  if(ADMIN_BATCH_BUSY_V610)return;ADMIN_BATCH_PREVIEW_V610=null;
+  const review=document.getElementById('adminBatchReviewV610');if(review)review.innerHTML='';
+}
+function fillAdminBatchV610(value){
+  if(ADMIN_BATCH_BUSY_V610||pendingAdminBatchClientV610().length)return;
+  document.querySelectorAll('.admin-batch-value').forEach(el=>el.value=value===0?'':String(value));captureAdminBatchDraftV610();cancelAdminBatchV610();
+}
+function previewAdminBatchV610(){
+  if(ADMIN_BATCH_BUSY_V610||pendingAdminBatchClientV610().length)return;captureAdminBatchDraftV610();
+  const mode=ADMIN_BATCH_MODE_V610,field=mode==='COINS'?'amount':'quantity';
+  const entries=[...document.querySelectorAll('.admin-batch-value')].map(el=>({studentId:el.dataset.student,[field]:Number(el.value||0)}));
+  if(entries.some(r=>!Number.isSafeInteger(r[field])||r[field]<0)){alert('請輸入非負整數');return;}
+  if(!entries.some(r=>r[field]>0)){alert('請至少填寫一位學生的發放數值');return;}
+  if(mode==='ITEMS'&&!ADMIN_BATCH_ITEM_V610){alert('請先選擇道具');return;}
+  ADMIN_BATCH_PREVIEW_V610={mode,itemId:mode==='ITEMS'?ADMIN_BATCH_ITEM_V610:'',entries,reason:'課堂批次獎勵'};
+  const item=adminData.items.find(x=>String(x['道具ID'])===ADMIN_BATCH_ITEM_V610),label=mode==='COINS'?'金幣':item?.['名稱']||'道具';
+  const review=document.getElementById('adminBatchReviewV610');
+  review.innerHTML=`<div class="petcard"><h4>確認發放：${esc(label)}</h4><p>本次 ${entries.filter(r=>r[field]>0).length} 位學生，合計 ${entries.reduce((n,r)=>n+BigInt(r[field]),0n)} ${mode==='COINS'?'金幣':'個'}。</p>${entries.filter(r=>r[field]>0).map(r=>`<div>${esc(r.studentId)}：+${r[field]}</div>`).join('')}<p>確認後一次送出整批。</p><button class="btn purple admin-batch-control" onclick="submitAdminBatchV610()">確定發放</button> <button class="btn gray admin-batch-control" onclick="cancelAdminBatchV610()">返回修改</button></div>`;
+}
+async function submitAdminBatchV610(requestId){
+  if(ADMIN_BATCH_BUSY_V610)return;
+  let pending;
+  try{
+    if(requestId)pending=pendingAdminBatchClientV610().find(p=>p.requestId===requestId);
+    else{
+      if(pendingAdminBatchClientV610().length||!ADMIN_BATCH_PREVIEW_V610)return;
+      pending={...ADMIN_BATCH_PREVIEW_V610,requestId:crypto.randomUUID()};
+      localStorage.setItem(ADMIN_BATCH_PENDING_PREFIX_V610+pending.requestId,JSON.stringify(pending));
+    }
+    if(!pending)return;setAdminBatchBusyV610(true);
+    const response=pending.mode==='COINS'?await gs('grantCoinsBatchV610',adminPassword,pending.entries,pending.requestId,pending.reason):await gs('grantItemsBatchV610',adminPassword,pending.itemId,pending.entries,pending.requestId,pending.reason);
+    ADMIN_BATCH_RESULT_V610=response;
+    if(response.ok===false){if(response.retryable!==false)response.message=response.message||'結果尚未確認，請重試原批次';else localStorage.removeItem(ADMIN_BATCH_PENDING_PREFIX_V610+pending.requestId);}
+    else{
+      localStorage.removeItem(ADMIN_BATCH_PENDING_PREFIX_V610+pending.requestId);ADMIN_BATCH_PREVIEW_V610=null;
+      response.results.forEach(r=>{
+        if(!r.ok||r.skipped)return;
+        if(pending.mode==='COINS'){
+          const student=adminData.students.find(s=>String(s.id)===r.studentId);if(student)student.coins=r.coins;
+          const el=document.getElementById('coin-'+r.studentId);if(el)el.textContent=r.coins;
+        }
+        ADMIN_BATCH_DRAFT_V610[pending.mode][r.studentId]='0';
+      });
+    }
+  }catch(e){ADMIN_BATCH_RESULT_V610={ok:false,message:String(e.message||e)+'；請以原批次重試確認。'};}
+  finally{ADMIN_BATCH_BUSY_V610=false;renderAdminBatchV610();}
+}
+function showAdminBatchResultV610(result){
+  const el=document.getElementById('adminBatchResultV610');if(!el||!result)return;
+  el.innerHTML=`<p><b>${result.ok?'發放完成':'尚未完成確認'}</b>：成功 ${result.successCount||0} 人／失敗 ${result.failedCount||0} 人／略過 ${result.skippedCount||0} 人${result.unconfirmedCount?'／待確認 '+result.unconfirmedCount+' 人':''}</p>${result.message?`<p class="wrong">${esc(result.message)}</p>`:''}${(result.results||[]).map(r=>`<div>${esc(r.studentId)}：${r.ok===null?'待確認':r.ok?(r.skipped?'略過（0）':'✅ +'+(r.amount??r.quantity)):'❌ '+esc(r.reason)}</div>`).join('')}`;
 }
 function toggleAllAdminStudents(on){
   document.querySelectorAll('.admin-student-check').forEach(x=>x.checked=!!on);

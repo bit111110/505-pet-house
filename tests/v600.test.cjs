@@ -12,7 +12,7 @@ let locked = false, fault = null;
 const clone = rows => rows.map(row => row.slice());
 function makeSheet(name, values = []) {
   const sh = { name, values: clone(values), validations: [],
-    getLastRow: () => sh.values.length, getLastColumn: () => sh.values[0]?.length || 0,
+    getLastRow: () => sh.values.length, getLastColumn: () => sh.values[0]?.length || 0, getName:()=>name,
     getMaxRows: () => Math.max(1000, sh.values.length), getSheetId: () => [...tables.keys()].indexOf(name) + 1,
     getDataRange: () => ({ getValues: () => clone(sh.values), getDisplayValues: () => sh.values.map(row => row.map(String)) }),
     setFrozenRows() {},
@@ -55,7 +55,7 @@ const context = vm.createContext({ console, Date, Math, JSON, BigInt, Set, Map, 
     const tokens={yyyy:parts.year,MM:parts.month,dd:parts.day,HH:parts.hour,mm:parts.minute,ss:parts.second};return format.replace(/yyyy|MM|dd|HH|mm|ss/g,token=>tokens[token]);
   } },
   CacheService: { getScriptCache: () => ({ get: key => cache.get(key) || null, put: (key, value) => cache.set(key, value), remove: key => cache.delete(key) }) },
-  LockService: { getScriptLock: () => ({ waitLock() { assert.equal(locked, false); locked = true; }, releaseLock() { locked = false; } }) }
+  LockService: { getScriptLock: () => ({ hasLock:()=>locked, waitLock() { assert.equal(locked, false); locked = true; }, releaseLock() { locked = false; } }) }
 });
 vm.runInContext(backend, context);
 const call = (name, ...args) => context[name](...args);
