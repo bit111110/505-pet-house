@@ -111,4 +111,11 @@ button.furniture-card{cursor:pointer}
 .furniture-preview{padding:16px;border:1px solid #e3d9ca;border-radius:14px;max-width:640px;margin:auto}
 .furniture-preview .furniture-image{height:380px}
 .furniture-empty{padding:28px;text-align:center}
+.admin-batch-loading{position:fixed;inset:0;z-index:10000;display:flex;align-items:center;justify-content:center;padding:20px;background:rgba(30,24,40,.65);overflow:auto;box-sizing:border-box}
+.admin-batch-loading-card{width:min(100%,460px);padding:28px 20px;border-radius:20px;background:#fffaf3;color:#453a50;text-align:center;box-sizing:border-box;overflow-wrap:anywhere;box-shadow:0 12px 40px rgba(0,0,0,.25)}
+.admin-batch-loading-card h2{font-size:clamp(20px,4vw,26px);margin:18px 0 12px}
+.admin-batch-loading-card p{line-height:1.7;margin:0}
+.admin-batch-loading-spinner{display:inline-block;width:38px;height:38px;border:4px solid #e6ddeb;border-top-color:#8b61a6;border-radius:50%;animation:admin-batch-loading-spin 1s linear infinite}
+@keyframes admin-batch-loading-spin{to{transform:rotate(360deg)}}
+@media(prefers-reduced-motion:reduce){.admin-batch-loading-spinner{animation:none}}
 @media(max-width:600px){.furniture-main{padding:12px}.furniture-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.furniture-card{padding:10px}.furniture-image{height:128px}.furniture-preview .furniture-image{height:280px}}

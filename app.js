@@ -2085,6 +2085,28 @@ async function loadAdmin(){
 let ADMIN_BATCH_MODE_V610='COINS',ADMIN_BATCH_BUSY_V610=false,ADMIN_BATCH_PREVIEW_V610=null;
 let ADMIN_BATCH_DRAFT_V610={COINS:{},ITEMS:{}},ADMIN_BATCH_ITEM_V610='',ADMIN_BATCH_RESULT_V610=null;
 const ADMIN_BATCH_PENDING_PREFIX_V610='petHouseAdminBatchV610:';
+let ADMIN_BATCH_LOADING_TIMER_V610=null,ADMIN_BATCH_VIEW_INERT_V610=false;
+function showAdminBatchLoadingV610(){
+  hideAdminBatchLoadingV610();
+  const overlay=document.createElement('div');
+  overlay.id='adminBatchLoadingV610';overlay.className='admin-batch-loading';
+  overlay.setAttribute('role','status');overlay.setAttribute('aria-live','polite');overlay.setAttribute('aria-atomic','true');overlay.tabIndex=-1;
+  overlay.innerHTML='<div class="admin-batch-loading-card"><span class="admin-batch-loading-spinner" aria-hidden="true"></span><h2>批次發放處理中…</h2><p>正在更新全班資料，請勿關閉或重複點擊</p></div>';
+  const view=document.getElementById('adminView');
+  if(view){ADMIN_BATCH_VIEW_INERT_V610=view.inert;view.inert=true;}
+  document.body.appendChild(overlay);overlay.focus({preventScroll:true});
+  ADMIN_BATCH_LOADING_TIMER_V610=setTimeout(()=>{
+    if(!overlay.isConnected)return;
+    overlay.querySelector('h2').textContent='仍在處理中，請稍候…';
+    overlay.querySelector('p').textContent='請勿重新送出，以免造成重複操作。';
+  },15000);
+}
+function hideAdminBatchLoadingV610(){
+  clearTimeout(ADMIN_BATCH_LOADING_TIMER_V610);ADMIN_BATCH_LOADING_TIMER_V610=null;
+  const overlay=document.getElementById('adminBatchLoadingV610');if(!overlay)return;
+  overlay.remove();
+  const view=document.getElementById('adminView');if(view)view.inert=ADMIN_BATCH_VIEW_INERT_V610;
+}
 function pendingAdminBatchClientV610(){
   const rows=[];
   for(let i=0;i<localStorage.length;i++){
@@ -2154,7 +2176,7 @@ async function submitAdminBatchV610(requestId){
       pending={...ADMIN_BATCH_PREVIEW_V610,requestId:crypto.randomUUID()};
       localStorage.setItem(ADMIN_BATCH_PENDING_PREFIX_V610+pending.requestId,JSON.stringify(pending));
     }
-    if(!pending)return;setAdminBatchBusyV610(true);
+    if(!pending)return;setAdminBatchBusyV610(true);showAdminBatchLoadingV610();
     const response=pending.mode==='COINS'?await gs('grantCoinsBatchV610',adminPassword,pending.entries,pending.requestId,pending.reason):await gs('grantItemsBatchV610',adminPassword,pending.itemId,pending.entries,pending.requestId,pending.reason);
     ADMIN_BATCH_RESULT_V610=response;
     if(response.ok===false){if(response.retryable!==false)response.message=response.message||'結果尚未確認，請重試原批次';else localStorage.removeItem(ADMIN_BATCH_PENDING_PREFIX_V610+pending.requestId);}
@@ -2170,7 +2192,7 @@ async function submitAdminBatchV610(requestId){
       });
     }
   }catch(e){ADMIN_BATCH_RESULT_V610={ok:false,message:String(e.message||e)+'；請以原批次重試確認。'};}
-  finally{ADMIN_BATCH_BUSY_V610=false;renderAdminBatchV610();}
+  finally{hideAdminBatchLoadingV610();ADMIN_BATCH_BUSY_V610=false;renderAdminBatchV610();}
 }
 function showAdminBatchResultV610(result){
   const el=document.getElementById('adminBatchResultV610');if(!el||!result)return;
