@@ -1,4 +1,4 @@
-const FRONTEND_BUILD='20261008-v600-batch-idempotent';
+const FRONTEND_BUILD='20261008-v610-stone-batch';
 const BUILTIN_LAND_BACKGROUNDS = {
   'LAND001': 'assets/maps/grassland.png',
   'LAND002': 'assets/maps/forest.png',
@@ -1078,32 +1078,62 @@ function renderStoneModeV600(){
   const stone=STONE_CATALOG_V600.find(x=>x.attribute===attribute),quantity=stone?inventoryQty(stone.itemId):0;
   root.innerHTML=`<h3>💎 ${esc(attribute)}之石</h3><p>每顆永久增加 <b>${esc(stone?.increment||'5')}</b> 傷害，每次只強化一個技能。</p><p class="stone-balance">持有 ${quantity} 顆 · 強化可以持續累積</p>
   ${!UPGRADE_READY_V600?'<div class="itemcard">請老師先執行 setupOrUpgradeV600()。</div>':''}
-  ${pending?`<div class="itemcard"><b>有一筆強化尚未確認完成</b><p>寵物 ${esc(pending.petId)} · 技能 ${esc(pending.skillId)}</p><button class="btn purple stone-action" onclick="useStoneV600()">重試上次強化</button></div>`:''}
-  <div class="upgrade-skills">${skills.map(s=>`<div class="upgrade-skill"><b>${esc(s.name)}</b><span class="skill-kind">${s.kind==='general'?'一般技能':s.kind==='special'?'30 級專屬技能':'屬性技能'}</span><p>基礎 ${s.baseDamage} + 強化 ${esc(s.bonusDamage)} = <strong>${esc(s.finalDamage)}</strong></p><button class="btn purple stone-action" ${!UPGRADE_READY_V600||!stone||quantity<1||pending||STONE_BUSY_V600?'disabled':''} onclick="useStoneV600('${esc(s.id)}')">使用 1 顆${esc(stone?.name||'屬性石')}</button></div>`).join('')}</div>
-  <details class="stone-catalog"><summary>查看 12 種屬性石</summary><div class="stone-catalog-grid">${STONE_CATALOG_V600.map(s=>`<div>${attributeIconHtml(s.attribute,20)} ${esc(s.name)} ×${inventoryQty(s.itemId)}</div>`).join('')}</div></details>`;
+  <div id="stoneRetryV610" class="itemcard" ${pending?'':'hidden'}><b>有一筆強化尚未確認完成</b><p>請重試原請求，確認前不會建立新強化。</p><button class="btn purple stone-retry" onclick="useStoneV600()">重試上次強化</button></div>
+  <div class="upgrade-skills">${skills.map(s=>`<div class="upgrade-skill"><b>${esc(s.name)}</b><span class="skill-kind">${s.kind==='general'?'一般技能':s.kind==='special'?'30 級專屬技能':'屬性技能'}</span><p>基礎 ${s.baseDamage} + 強化 <span data-stone-bonus="${esc(s.id)}">${esc(s.bonusDamage)}</span> = <strong data-stone-final="${esc(s.id)}">${esc(s.finalDamage)}</strong></p><div class="row">${[1,5,10,'ALL'].map(q=>`<button class="btn purple stone-action" data-stone-quantity="${q}" ${!UPGRADE_READY_V600||!stone||quantity<(q==='ALL'?1:q)||pending||STONE_BUSY_V600?'disabled':''} onclick="useStoneV600('${esc(s.id)}','${q}')">${q==='ALL'?'全部使用':'使用 '+q+' 顆'}</button>`).join('')}</div></div>`).join('')}</div>
+  <details class="stone-catalog"><summary>查看 12 種屬性石</summary><div class="stone-catalog-grid">${STONE_CATALOG_V600.map(s=>`<div>${attributeIconHtml(s.attribute,20)} ${esc(s.name)} ×<span data-stone-stock="${esc(s.itemId)}">${inventoryQty(s.itemId)}</span></div>`).join('')}</div></details>`;
 }
-async function useStoneV600(skillId){
+function updateStoneViewV610(changedPet,changedSkill,changedItem){
+  if(currentTab!=='upgrade'||UPGRADE_MODE_V600!=='stone')return;
+  const pet=state.pets.find(p=>p.petId===upPet.value),stone=STONE_CATALOG_V600.find(s=>s.attribute===getPetAttribute(pet));
+  const have=stone?inventoryQty(stone.itemId):0,pending=readStonePendingV600();
+  const balance=document.querySelector('.stone-balance');if(balance)balance.textContent=`持有 ${have} 顆 · 強化可以持續累積`;
+  document.querySelectorAll('[data-stone-stock]').forEach(el=>{if(el.dataset.stoneStock===changedItem)el.textContent=inventoryQty(changedItem);});
+  getConfiguredPetSkills(pet).filter(s=>pet.petId===changedPet&&s.id===changedSkill).forEach(s=>{
+    document.querySelectorAll('[data-stone-bonus]').forEach(el=>{if(el.dataset.stoneBonus===s.id)el.textContent=s.bonusDamage;});
+    document.querySelectorAll('[data-stone-final]').forEach(el=>{if(el.dataset.stoneFinal===s.id)el.textContent=s.finalDamage;});
+  });
+  document.querySelectorAll('.stone-action').forEach(el=>el.disabled=STONE_BUSY_V600||!!pending||!UPGRADE_READY_V600||!stone||have<(el.dataset.stoneQuantity==='ALL'?1:Number(el.dataset.stoneQuantity)));
+  document.querySelectorAll('.stone-retry,.upgrade-mode-btn,#upPet').forEach(el=>el.disabled=STONE_BUSY_V600||EXP_USE_BUSY);
+  const retry=document.getElementById('stoneRetryV610');if(retry)retry.hidden=!pending;
+  const notice=document.getElementById('upgradeNotice');if(notice)notice.textContent=UPGRADE_NOTICE_V600;
+}
+function applyStoneResultV610(r){
+  const item=inventory.find(x=>x.itemId===r.itemId);if(item)item.quantity=r.remainingStone;
+  state.skillEnhancements=state.skillEnhancements||{};
+  state.skillEnhancements[r.petId]=state.skillEnhancements[r.petId]||{};
+  state.skillEnhancements[r.petId][r.skillId]=String(r.totalBonus);
+  CLIENT_CACHE.inventory=inventory;CLIENT_CACHE.inventoryAt=Date.now();saveLocal('inventory',inventory);
+  UPGRADE_AT_V600=Date.now();
+}
+function clearStonePendingV610(key,requestId){
+  const saved=JSON.parse(localStorage.getItem(key)||'null');
+  if(saved?.requestId===requestId)localStorage.removeItem(key);
+}
+async function useStoneV600(skillId,quantity=1){
   if(STONE_BUSY_V600||EXP_USE_BUSY)return;
   const id=currentId,pet=state.pets.find(p=>p.petId===upPet.value);
   let pending=readStonePendingV600();
   if(!pending){
     const stone=STONE_CATALOG_V600.find(s=>s.attribute===getPetAttribute(pet));
-    if(!stone||inventoryQty(stone.itemId)<1||!getConfiguredPetSkills(pet).some(s=>s.id===skillId))return;
-    pending={petId:pet.petId,skillId,itemId:stone.itemId,requestId:crypto.randomUUID()};
+    const skill=getConfiguredPetSkills(pet).find(s=>s.id===skillId),mode=quantity==='ALL'?'ALL':Number(quantity),used=mode==='ALL'?inventoryQty(stone?.itemId):mode;
+    if(!stone||!skill||!Number.isSafeInteger(used)||used<1||inventoryQty(stone.itemId)<used)return;
+    const added=BigInt(used)*5n;
+    if(!confirm(`${stone.name} ×${used}\n\n${skill.name}\n強化 +${skill.bonusDamage} → +${BigInt(skill.bonusDamage)+added}\n最終傷害 ${skill.finalDamage} → ${BigInt(skill.finalDamage)+added}\n\n確定強化？`))return;
+    pending={petId:pet.petId,skillId,itemId:stone.itemId,quantity:mode,batch:true,requestId:crypto.randomUUID()};
     try{localStorage.setItem(stonePendingKeyV600(),JSON.stringify(pending));}catch(e){alert('無法保存強化請求，請檢查瀏覽器儲存空間後再試。');return;}
   }
   STONE_BUSY_V600=true;
-  document.querySelectorAll('.stone-action,.upgrade-mode-btn,#upPet').forEach(el=>el.disabled=true);
+  const pendingKey=stonePendingKeyV600();
+  document.querySelectorAll('.stone-action,.stone-retry,.upgrade-mode-btn,#upPet').forEach(el=>el.disabled=true);
   try{
-    const r=await gs('useAttributeStoneV600',id,pending.petId,pending.skillId,pending.itemId,pending.requestId,STUDENT_TOKEN_V600);
+    const r=pending.batch?await gs('useAttributeStonesBatchV610',id,pending.petId,pending.skillId,pending.itemId,pending.quantity,pending.requestId,STUDENT_TOKEN_V600):await gs('useAttributeStoneV600',id,pending.petId,pending.skillId,pending.itemId,pending.requestId,STUDENT_TOKEN_V600);
     if(currentId!==id)return;
-    if(r.ok===false){if(!r.retryable)localStorage.removeItem(stonePendingKeyV600());throw new Error(r.message||'強化失敗');}
-    localStorage.removeItem(stonePendingKeyV600());applyUpgradeBundleV600(r);
-    const stone=STONE_CATALOG_V600.find(s=>s.itemId===pending.itemId);
-    UPGRADE_NOTICE_V600=`✅ 技能已永久強化 +${stone?.increment||'5'} 傷害`;
-    await renderUpgrade();
-  }catch(e){if(currentId===id){alert(e.message||e);await renderUpgrade();}}
-  finally{STONE_BUSY_V600=false;if(currentId===id && currentTab==='upgrade')renderUpgrade();}
+    if(r.ok===false){if(!r.retryable)clearStonePendingV610(pendingKey,pending.requestId);throw new Error(r.message||'強化失敗');}
+    if(pending.batch)applyStoneResultV610(r);else applyUpgradeBundleV600(r);
+    clearStonePendingV610(pendingKey,pending.requestId);
+    UPGRADE_NOTICE_V600=`✅ 技能已永久強化 +${r.addedDamage||'5'} 傷害${r.replayed?'（原交易已確認）':''}`;
+  }catch(e){if(currentId===id){UPGRADE_NOTICE_V600=String(e.message||e);alert(e.message||e);}}
+  finally{STONE_BUSY_V600=false;if(currentId===id)updateStoneViewV610(pending.petId,pending.skillId,pending.itemId);}
 }
 
 function setExpBusyV5104(on,label='處理中...'){

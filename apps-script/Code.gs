@@ -2452,9 +2452,102 @@ function getUpgradeBundleV600(studentId,token){
   verifyStudentSessionV600_(studentId,token);
   const id=String(studentId).trim(),ss=SpreadsheetApp.getActive();
   const cfg=cachedMap_(SHEETS.PET_CONFIG,'寵物ID',300);
-  const pending=readRowsWithPositionV600_(ss.getSheetByName(SHEETS.SKILL_ENHANCEMENTS)).find(r=>String(r['學號']).trim()===id && r['狀態']==='PENDING');
-  const pendingOperation=pending?{petId:String(pending['寵物ID']),skillId:String(pending['技能ID']),itemId:String(pending['道具ID']),requestId:String(pending['請求ID'])}:null;
-  return safeForClient_({ok:true,pets:readObjects_(ss.getSheetByName(SHEETS.PETS)).filter(p=>String(p['學號']).trim()===id).map(p=>decoratePet_(p,cfg[String(p['寵物ID'])]||{})),inventory:getInventory(id),petBattleConfigs:getPetBattleConfigFast(),skillEnhancements:getSkillEnhancementsV600_(id),stones:ATTRIBUTE_STONES_V600,ready:!!ss.getSheetByName(SHEETS.SKILL_ENHANCEMENTS),pendingOperation});
+  const operations=studentRowsV610_(ss.getSheetByName(SHEETS.SKILL_ENHANCEMENTS),id);
+  const pending=operations.find(r=>r['狀態']==='PENDING');
+  const pendingOperation=pending?{petId:String(pending['寵物ID']),skillId:String(pending['技能ID']),itemId:String(pending['道具ID']),requestId:String(pending['請求ID']),...(pending['使用數量']?{quantity:pending['使用數量'],batch:true}:{})}:null;
+  const itemCfg=cachedMap_(SHEETS.ITEM_CONFIG,'道具ID',300),bonuses={};
+  operations.filter(r=>r['狀態']==='DONE').forEach(r=>{
+    const pid=String(r['寵物ID']),sid=String(r['技能ID']);bonuses[pid]=bonuses[pid]||{};
+    bonuses[pid][sid]=(BigInt(bonuses[pid][sid]||'0')+BigInt(String(r['傷害加成']||'0'))).toString();
+  });
+  return safeForClient_({ok:true,pets:studentRowsV610_(ss.getSheetByName(SHEETS.PETS),id).map(p=>decoratePet_(p,cfg[String(p['寵物ID'])]||{})),inventory:studentRowsV610_(ss.getSheetByName(SHEETS.STUDENT_ITEMS),id).filter(r=>Number(r['數量'])>0).map(r=>({itemId:String(r['道具ID']),quantity:Number(r['數量']),config:itemCfg[String(r['道具ID'])]||{}})),petBattleConfigs:getPetBattleConfigFast(),skillEnhancements:bonuses,stones:ATTRIBUTE_STONES_V600,ready:!!ss.getSheetByName(SHEETS.SKILL_ENHANCEMENTS),pendingOperation});
+}
+// 只掃學號索引欄，再讀該學生連續列；不取得整張資料表快照。
+function studentRowsV610_(sh,studentId){
+  if(!sh||sh.getLastRow()<2)return [];
+  const hm=headerMap_(sh),count=sh.getLastRow()-1;
+  const ids=sh.getRange(2,hm['學號'],count,1).getValues(),ranges=[];
+  ids.forEach((r,i)=>{
+    if(String(r[0]).trim()!==studentId)return;
+    const last=ranges[ranges.length-1],row=i+2;
+    if(last&&last.row+last.count===row)last.count++;else ranges.push({row,count:1});
+  });
+  const out=[];
+  ranges.forEach(range=>sh.getRange(range.row,1,range.count,sh.getLastColumn()).getValues().forEach((r,i)=>{
+    const obj={_row:range.row+i};Object.keys(hm).forEach(key=>obj[key]=r[hm[key]-1]);out.push(obj);
+  }));
+  return out;
+}
+function setupOrUpgradeV610(){
+  setupOrUpgradeV600();
+  const lock=LockService.getScriptLock();lock.waitLock(12000);
+  try{
+    ensureSheet_(SHEETS.SKILL_ENHANCEMENTS,SKILL_ENHANCEMENT_HEADERS_V600.concat(['使用數量','強化結果']));
+    return 'V6.1 批量強化欄位已補齊；保留所有既有資料';
+  }finally{lock.releaseLock();}
+}
+// 基礎傷害對應既有前端技能表；專屬技能沿用共用設定快取。
+function stoneSkillBaseV610_(id,pid,sid,stone,cfg,battle){
+  const row=studentRowsV610_(SpreadsheetApp.getActive().getSheetByName(SHEETS.PETS),id).find(r=>String(r['寵物ID'])===pid);
+  if(!row)throw new Error('這不是你的寵物');
+  const pet=decoratePet_(row,cfg[pid]||{}),attribute=String(battle.attribute||pet.attribute||'光');
+  if(attribute!==stone.attribute)throw new Error('寵物只能使用相同屬性的石頭');
+  const lv=Math.min(30,pet.level),attr=[[1,20],[5,30],[10,45],[15,60],[20,80],[25,105]],general=[[3,25],[7,35],[13,50],[17,65],[23,85],[27,110]];
+  const a=attr.find(([l])=>l<=lv&&sid==='ATTR-'+attribute+'-'+l),g=general.find(([l])=>l<=lv&&sid==='GEN-'+l);
+  if(a)return a[1];if(g)return g[1];
+  if(lv>=30&&battle.specialName&&sid==='SPECIAL-'+pid)return Math.max(1,Number(battle.specialDamage||150));
+  throw new Error('這個技能尚未解鎖或不存在');
+}
+function useAttributeStonesBatchV610(studentId,petId,skillId,itemId,quantity,requestId,token){
+  verifyStudentSessionV600_(studentId,token);
+  const id=String(studentId).trim(),pid=String(petId),sid=String(skillId),iid=String(itemId),rid=String(requestId);
+  const mode=quantity==='ALL'?'ALL':Number(quantity);
+  if(!/^[A-Za-z0-9-]{16,100}$/.test(rid)||!(mode==='ALL'||(Number.isSafeInteger(mode)&&mode>0)))return {ok:false,retryable:false,message:'請求編號或使用數量無效'};
+  // 設定讀取不占用交易鎖；實際庫存、寵物等級與交易狀態仍在鎖內驗證。
+  const cfg=cachedMap_(SHEETS.PET_CONFIG,'寵物ID',300),battle=getPetBattleConfigFast().find(p=>p.petId===pid)||{};
+  const lock=LockService.getScriptLock();lock.waitLock(12000);
+  try{
+    const ss=SpreadsheetApp.getActive(),log=ss.getSheetByName(SHEETS.SKILL_ENHANCEMENTS),lh=log?headerMap_(log):{};
+    if(!lh['使用數量']||!lh['強化結果'])return {ok:false,retryable:false,message:'請老師先執行 setupOrUpgradeV610()'};
+    const operations=studentRowsV610_(log,id),existing=operations.find(r=>String(r['請求ID'])===rid);
+    if(existing){
+      if(String(existing['寵物ID'])!==pid||String(existing['技能ID'])!==sid||String(existing['道具ID'])!==iid||String(existing['使用數量'])!==String(mode))throw new Error('請求編號已用於其他強化');
+      CacheService.getScriptCache().remove('SKILL_BONUS_V600:'+id);
+      if(existing['狀態']==='DONE'){
+        const result=JSON.parse(String(existing['強化結果']));
+        // 重送不寫入；若另有後續強化／消耗，回傳目前值，避免 UI 倒退至舊庫存。
+        const total=operations.filter(r=>r['狀態']==='DONE'&&String(r['寵物ID'])===pid&&String(r['技能ID'])===sid).reduce((n,r)=>n+BigInt(String(r['傷害加成']||'0')),0n);
+        const inventory=studentRowsV610_(ss.getSheetByName(SHEETS.STUDENT_ITEMS),id).find(r=>String(r['道具ID'])===iid);
+        return {...result,remainingStone:Number(inventory?.['數量']||0),totalBonus:total.toString(),finalDamage:(BigInt(result.finalDamage)-BigInt(result.totalBonus)+total).toString(),replayed:true};
+      }
+      // RPC 可能仍在執行；未確認時不能再次扣庫存或覆寫其他已完成交易。
+      return {ok:false,retryable:true,message:'上一筆強化交易尚未確認；請稍後以相同請求重試，若持續未確認請老師檢查交易紀錄'};
+    }
+    let stone,base,items,ih,item,have,used;
+    try{
+      stone=attributeStoneV600_(iid);if(!stone)throw new Error('這不是屬性石');
+      if(operations.some(r=>r['狀態']==='PENDING'))throw new Error('請先重試上一筆尚未完成的強化');
+      base=stoneSkillBaseV610_(id,pid,sid,stone,cfg,battle);
+      assertNoPendingStoneMailV600_(id,iid,undefined,studentRowsV610_(ss.getSheetByName(SHEETS.MAILBOX),id));
+      items=ss.getSheetByName(SHEETS.STUDENT_ITEMS);ih=headerMap_(items);
+      const matches=studentRowsV610_(items,id).filter(r=>String(r['道具ID'])===iid);
+      if(matches.length>1)throw new Error('同一道具有重複庫存列，請老師確認');
+      item=matches[0];have=Number(item?.['數量']||0);used=mode==='ALL'?have:mode;
+      if(!Number.isSafeInteger(have)||!Number.isSafeInteger(used)||used<1||used>have)throw new Error('屬性石數量不足');
+      requireMailSheetsServiceV600_();
+    }catch(e){return {ok:false,retryable:false,message:e.message};}
+    const added=BigInt(used)*5n;
+    const before=operations.filter(r=>r['狀態']==='DONE'&&String(r['寵物ID'])===pid&&String(r['技能ID'])===sid).reduce((n,r)=>n+BigInt(String(r['傷害加成']||'0')),0n);
+    const total=before+added,result={ok:true,requestId:rid,petId:pid,skillId:sid,itemId:iid,usedQuantity:used,remainingStone:have-used,addedDamage:added.toString(),totalBonus:total.toString(),finalDamage:(BigInt(base)+total).toString()};
+    const row=log.getLastRow()+1;
+    appendObject_(log,{'學號':id,'請求ID':rid,'寵物ID':pid,'技能ID':sid,'屬性':stone.attribute,'道具ID':iid,'傷害加成':added.toString(),'使用時間':new Date(),'狀態':'PENDING','道具原數量':have,'道具新數量':have-used,'道具列號':item._row,'使用數量':String(mode),'強化結果':JSON.stringify(result)});
+    SpreadsheetApp.flush();
+    CacheService.getScriptCache().remove('SKILL_BONUS_V600:'+id);
+    // 同一原子請求提交扣庫存 + DONE；PENDING 絕不視為已獲得傷害加成。
+    Sheets.Spreadsheets.batchUpdate({requests:[mailCellRequestV600_(items,item._row,ih['數量'],have-used),mailCellRequestV600_(log,row,lh['狀態'],'DONE')]},ss.getId());
+    CacheService.getScriptCache().remove('SKILL_BONUS_V600:'+id);
+    return {...result,replayed:false};
+  }finally{lock.releaseLock();}
 }
 function validateStoneSkillV600_(studentId,petId,skillId,stone){
   const cfg=cachedMap_(SHEETS.PET_CONFIG,'寵物ID',300);
@@ -2482,6 +2575,8 @@ function useAttributeStoneV600(studentId,petId,skillId,itemId,requestId,token){
     let operation=rows.find(r=>String(r['學號']).trim()===id && String(r['請求ID'])===rid);
     let logRow=operation?operation._row:0;
     if(operation && (String(operation['寵物ID'])!==pid||String(operation['技能ID'])!==sid||String(operation['道具ID'])!==iid))throw new Error('請求編號已用於其他強化，請重新登入');
+    // V6.1 原子提交的未確認交易不可套用 V6.0 數量恢復流程。
+    if(operation?.['使用數量'] && operation['狀態']!=='DONE')return {ok:false,retryable:true,message:'請使用原批量請求重試確認；不可用單顆流程恢復批量交易'};
     if(operation?.['狀態']==='DONE'){
       CacheService.getScriptCache().remove('SKILL_BONUS_V600:'+id);
       return {...getUpgradeBundleV600(id,token),requestId:rid,replayed:true};
@@ -2591,6 +2686,7 @@ function doPost(e) {
       useExpItemsBatchV599: useExpItemsBatchV599,
       getUpgradeBundleV600: getUpgradeBundleV600,
       useAttributeStoneV600: useAttributeStoneV600,
+      useAttributeStonesBatchV610: useAttributeStonesBatchV610,
       getMailbox: getMailbox,
       getMailboxFresh: getMailboxFresh,
       claimMail: claimMail,

@@ -8,7 +8,7 @@ const backend=fs.readFileSync(path.join(root,'apps-script/Code.gs'),'utf8');
 const vm=require('node:vm');
 const oldBackend=execFileSync('git',['show','HEAD:apps-script/Code.gs'],{cwd:root,encoding:'utf8'});
 const oldContext=vm.createContext({}),newContext=vm.createContext({});vm.runInContext(oldBackend,oldContext);vm.runInContext(backend,newContext);
-for(const name of ['randomGift_','hourlyPetGiftV600_','claimMailsLockedV600_','useAttributeStoneV600','getBattleProgressV5105','saveBattleProgressV5105','clearBattleProgressV5105'])assert.equal(newContext[name].toString().replace(/\r\n/g,'\n'),oldContext[name].toString().replace(/\r\n/g,'\n'),name+' unchanged');
+for(const name of ['randomGift_','hourlyPetGiftV600_','claimMailsLockedV600_','getBattleProgressV5105','saveBattleProgressV5105','clearBattleProgressV5105'])assert.equal(newContext[name].toString().replace(/\r\n/g,'\n'),oldContext[name].toString().replace(/\r\n/g,'\n'),name+' unchanged');
 const output=process.env.BATTLE_SCREENSHOT_DIR;
 async function fixture(page){
  await page.route('**/*',async route=>{

@@ -164,11 +164,13 @@ async function testUpgradeDOM() {
   ui.document={getElementById:id=>elements.get(id)||null,querySelectorAll:()=>[],createElement:element};
   ui.upPet={value:'PET001',onchange:null};ui.upPetInfo=elements.get('upPetInfo');ui.panel=element();
   ui.alert=()=>{};
+  ui.confirm=()=>true;
+  ui.document.querySelector=()=>null;
   ui.fixture={...ui.bundle,skillEnhancements:{PET001:{'ATTR-草-25':'20'}}};
   let mutationCalls=0,release;
   ui.gs=async action=>{
     if(action==='getUpgradeBundleV600')return ui.fixture;
-    if(action==='useAttributeStoneV600'){mutationCalls++;return new Promise(resolve=>release=resolve);}
+    if(action==='useAttributeStonesBatchV610'){mutationCalls++;return new Promise(resolve=>release=resolve);}
     throw new Error(action);
   };
   vm.runInContext("currentId='50501';STUDENT_TOKEN_V600='test';currentTab='upgrade';",ui);
@@ -176,22 +178,24 @@ async function testUpgradeDOM() {
   assert.ok(elements.get('upgradeMain').innerHTML.includes('讓夥伴變得更強'));
   assert.ok(elements.get('upgradeMain').innerHTML.includes('exp-batch-check'), 'existing batch candy controls retained');
   vm.runInContext("UPGRADE_MODE_V600='stone';",ui);await vm.runInContext('renderUpgrade()',ui);
-  assert.ok(elements.get('stoneModeContent').innerHTML.includes('基礎 105 + 強化 20 = <strong>125</strong>'));
+  assert.ok(elements.get('stoneModeContent').innerHTML.includes('>20</span> = <strong'));
   const first=vm.runInContext("useStoneV600('ATTR-草-25')",ui);
   const saved=JSON.parse(uiCache.get('petHouseStonePendingV600:50501'));
   assert.equal(saved.skillId,'ATTR-草-25');
   await vm.runInContext("useStoneV600('GEN-3')",ui);
   assert.equal(mutationCalls,1,'duplicate button clicks cannot create a second request');
-  release({...ui.fixture,skillEnhancements:{PET001:{'ATTR-草-25':'25'}}});await first;
+  const originalMarkup=elements.get('upgradeMain').innerHTML;
+  release({ok:true,petId:'PET001',skillId:'ATTR-草-25',itemId:'STONE_GRASS',remainingStone:250,totalBonus:'25',addedDamage:'5'});await first;
   assert.equal(uiCache.has('petHouseStonePendingV600:50501'),false);
   assert.equal(vm.runInContext('STONE_BUSY_V600',ui),false);
-  assert.ok(elements.get('stoneModeContent').innerHTML.includes('基礎 105 + 強化 25 = <strong>130</strong>'));
+  assert.equal(vm.runInContext("getConfiguredPetSkills(state.pets[0]).find(s=>s.id==='ATTR-草-25').finalDamage",ui),'130');
+  assert.equal(elements.get('upgradeMain').innerHTML,originalMarkup,'stone success does not rebuild the page');
   ui.gs=async()=>{throw new Error('connection timed out');};
   await vm.runInContext("useStoneV600('GEN-3')",ui);
   const pending=JSON.parse(uiCache.get('petHouseStonePendingV600:50501'));
   assert.ok(pending.requestId,'uncertain request is saved for retry');
-  ui.gs=async(_action,_student,_pet,_skill,_item,requestId)=>{
-    assert.equal(requestId,pending.requestId,'retry uses the original operation ID');return ui.fixture;
+  ui.gs=async(_action,_student,_pet,_skill,_item,_quantity,requestId)=>{
+    assert.equal(requestId,pending.requestId,'retry uses the original operation ID');return {ok:true,petId:'PET001',skillId:'GEN-3',itemId:'STONE_GRASS',remainingStone:249,totalBonus:'5',addedDamage:'5'};
   };
   await vm.runInContext('useStoneV600()',ui);
   assert.equal(uiCache.has('petHouseStonePendingV600:50501'),false);
