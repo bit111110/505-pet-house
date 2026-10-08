@@ -2782,7 +2782,7 @@ function useAttributeStonesBatchV610(studentId,petId,skillId,itemId,quantity,req
       if(existing['狀態']==='DONE'){
         const result=JSON.parse(String(existing['強化結果']));
         // 重送不寫入；若另有後續強化／消耗，回傳目前值，避免 UI 倒退至舊庫存。
-        const total=operations.filter(r=>r['狀態']==='DONE'&&String(r['寵物ID'])===pid&&String(r['技能ID'])===sid).reduce((n,r)=>n+BigInt(String(r['傷害加成']||'0')),0n);
+        const total=operations.filter(r=>r['狀態']==='DONE'&&String(r['寵物ID'])===pid&&String(r['技能ID'])===sid).reduce((n,r)=>n+BigInt(String(r['傷害加成']||'0')),BigInt(0));
         const inventory=studentRowsV610_(ss.getSheetByName(SHEETS.STUDENT_ITEMS),id).find(r=>String(r['道具ID'])===iid);
         return {...result,remainingStone:Number(inventory?.['數量']||0),totalBonus:total.toString(),finalDamage:(BigInt(result.finalDamage)-BigInt(result.totalBonus)+total).toString(),replayed:true};
       }
@@ -2802,8 +2802,8 @@ function useAttributeStonesBatchV610(studentId,petId,skillId,itemId,quantity,req
       if(!Number.isSafeInteger(have)||!Number.isSafeInteger(used)||used<1||used>have)throw new Error('屬性石數量不足');
       requireMailSheetsServiceV600_();
     }catch(e){return {ok:false,retryable:false,message:e.message};}
-    const added=BigInt(used)*5n;
-    const before=operations.filter(r=>r['狀態']==='DONE'&&String(r['寵物ID'])===pid&&String(r['技能ID'])===sid).reduce((n,r)=>n+BigInt(String(r['傷害加成']||'0')),0n);
+    const added=BigInt(used)*BigInt(5);
+    const before=operations.filter(r=>r['狀態']==='DONE'&&String(r['寵物ID'])===pid&&String(r['技能ID'])===sid).reduce((n,r)=>n+BigInt(String(r['傷害加成']||'0')),BigInt(0));
     const total=before+added,result={ok:true,requestId:rid,petId:pid,skillId:sid,itemId:iid,usedQuantity:used,remainingStone:have-used,addedDamage:added.toString(),totalBonus:total.toString(),finalDamage:(BigInt(base)+total).toString()};
     const row=log.getLastRow()+1;
     appendObject_(log,{'學號':id,'請求ID':rid,'寵物ID':pid,'技能ID':sid,'屬性':stone.attribute,'道具ID':iid,'傷害加成':added.toString(),'使用時間':new Date(),'狀態':'PENDING','道具原數量':have,'道具新數量':have-used,'道具列號':item._row,'使用數量':String(mode),'強化結果':JSON.stringify(result)});
