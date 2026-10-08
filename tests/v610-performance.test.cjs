@@ -17,10 +17,12 @@ for(const sh of tables.values()){
  sh.getRange=(r,c,n=1,m=1)=>{ranges.push({sheet:sh.name,r,c,n,m});return range(r,c,n,m);};
 }
 const newBundle=context.getUpgradeBundleV600;
+const newEnhancements=context.getSkillEnhancementsV600_;
+vm.runInContext(old.getSkillEnhancementsV600_.toString(),context); // Measure the complete historical implementation.
 vm.runInContext(old.getUpgradeBundleV600.toString(),context);
 vm.runInContext(old.useAttributeStoneV600.toString().replace('function useAttributeStoneV600(','function benchmarkOldStone('),context);
 call('benchmarkOldStone','50501','PET001','GEN-7','STONE_GRASS',randomUUID(),token);
-const oldReads=reads.slice();context.getUpgradeBundleV600=newBundle;reads=[];ranges=[];
+const oldReads=reads.slice();context.getUpgradeBundleV600=newBundle;context.getSkillEnhancementsV600_=newEnhancements;reads=[];ranges=[];
 const result=call('useAttributeStonesBatchV610','50501','PET001','GEN-7','STONE_GRASS',10,randomUUID(),token);
 assert.equal(result.usedQuantity,10);assert.equal(reads.length,0,'warm batch transaction has no getDataRange reads');
 assert.equal(oldReads.filter(x=>x==='技能強化紀錄').length,3);

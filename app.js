@@ -1,4 +1,4 @@
-const FRONTEND_BUILD='20261008-v610-catalogs';
+const FRONTEND_BUILD='20261008-v610-battle-performance';
 const STONE_SPRITE_URL_V610='assets/items/stones/attribute-stones.png';
 const STONE_SPRITES_V610={LIGHT:0,EARTH:1,DARK:2,GRASS:3,WATER:4,POISON:5,FIRE:6,ELECTRIC:7,ICE:8,WIND:9,STEEL:10,CHAOS:11};
 const STONE_ATTRIBUTES_V610=['光','地','暗','草','水','毒','火','電','冰','風','鋼','混沌'];
@@ -790,6 +790,7 @@ async function loadMonsterCatalog(){
     const rows=await gsRaw('getMonsterCatalogFresh');
     if(Array.isArray(rows)){
       MONSTER_LIST=rows;
+      BATTLE_CONFIG_READY_V610.monsters=true;
       MONSTER_CONFIGS=Object.fromEntries(rows.map(m=>[String(m.monsterId),m]));
     }
   }catch(e){console.warn('怪物設定載入失敗',e);}
@@ -848,14 +849,15 @@ function attributeIconHtml(attr,size=24){
 
 
 let BATTLE_CONFIG_LOADING_V5106=null;
+const BATTLE_CONFIG_READY_V610={monsters:false,backgrounds:false,pets:false};
 async function ensureBattleConfigsV5106(){
   if(BATTLE_CONFIG_LOADING_V5106)return BATTLE_CONFIG_LOADING_V5106;
   if(MONSTER_LIST.length && BATTLE_BG_LIST.length && Object.keys(PET_BATTLE_CONFIGS).length)return true;
   BATTLE_CONFIG_LOADING_V5106=(async()=>{
     const jobs=[];
-    if(!MONSTER_LIST.length)jobs.push(loadMonsterCatalog());
-    if(!BATTLE_BG_LIST.length)jobs.push(gsRaw('getBattleBackgroundCatalogFast').then(r=>{if(Array.isArray(r))BATTLE_BG_LIST=r;}));
-    if(!Object.keys(PET_BATTLE_CONFIGS).length)jobs.push(gsRaw('getPetBattleConfigFast').then(r=>{if(Array.isArray(r))PET_BATTLE_CONFIGS=Object.fromEntries(r.map(x=>[String(x.petId),x]));}));
+    if(!MONSTER_LIST.length&&!BATTLE_CONFIG_READY_V610.monsters)jobs.push(loadMonsterCatalog());
+    if(!BATTLE_BG_LIST.length&&!BATTLE_CONFIG_READY_V610.backgrounds)jobs.push(gsRaw('getBattleBackgroundCatalogFast').then(r=>{if(Array.isArray(r)){BATTLE_BG_LIST=r;BATTLE_CONFIG_READY_V610.backgrounds=true;}}));
+    if(!Object.keys(PET_BATTLE_CONFIGS).length&&!BATTLE_CONFIG_READY_V610.pets)jobs.push(gsRaw('getPetBattleConfigFast').then(r=>{if(Array.isArray(r)){PET_BATTLE_CONFIGS=Object.fromEntries(r.map(x=>[String(x.petId),x]));BATTLE_CONFIG_READY_V610.pets=true;}}));
     await Promise.allSettled(jobs);
     return true;
   })().finally(()=>{BATTLE_CONFIG_LOADING_V5106=null;});
@@ -914,12 +916,19 @@ function getConfiguredPetSkills(pet){
 
 // 對戰畫面資源只屬於目前視圖；切頁取消動畫，不丟棄 challenge 答題與存檔狀態。
 let BATTLE_VIEW_EPOCH_V600=0;
+let BATTLE_SKILLS_SESSION_V610=null;
+function battleSkillsV610_(pet){
+  const key=[currentId,challenge.subject,pet.petId,pet.level,pet.stage].join(':');
+  if(BATTLE_SKILLS_SESSION_V610?.key!==key)BATTLE_SKILLS_SESSION_V610={key,skills:getConfiguredPetSkills(pet)};
+  return BATTLE_SKILLS_SESSION_V610.skills;
+}
 const BATTLE_TIMERS_V600=new Set(),BATTLE_ANIMATIONS_V600=new Set();
 function battleTimeoutV600_(callback,ms){
   const timer=setTimeout(()=>{BATTLE_TIMERS_V600.delete(timer);callback();},ms);
   BATTLE_TIMERS_V600.add(timer);return timer;
 }
 function cleanupBattleViewV600_(){
+  BATTLE_SKILLS_SESSION_V610=null;
   BATTLE_VIEW_EPOCH_V600++;
   BATTLE_TIMERS_V600.forEach(clearTimeout);BATTLE_TIMERS_V600.clear();
   BATTLE_ANIMATIONS_V600.forEach(finish=>finish(false));BATTLE_ANIMATIONS_V600.clear();
@@ -929,7 +938,7 @@ function cleanupBattleViewV600_(){
 function battleControlsV600_(){return document.getElementById('battleControls')||panel;}
 function switchMainMode(mode){
   const next=['home','battle','upgrade','furniture'].includes(mode)?mode:'home';
-  if(mainMode==='battle' && next!=='battle')cleanupBattleViewV600_();
+  if(mainMode==='battle' && next!=='battle'){flushChallengeAnswers(false);cleanupBattleViewV600_();}
   if(mainMode==='furniture' && next!=='furniture')cleanupFurnitureViewV610();
   mainMode=next;
   document.getElementById('studentLayout')?.classList.toggle('battle-mode',mainMode==='battle');
@@ -967,6 +976,7 @@ function renderBattleMain(){
     return;
   }
   scene.classList.remove('battle-intro');
+  if(scene.querySelector('.battle-main-scene')){updateBattleStageV610_(pet);return;}
   const mhp=Math.max(0,Number(challenge.monsterHp??challenge.monsterMaxHp??100));
   const mmax=Math.max(1,Number(challenge.monsterMaxHp||100));
   const battleBg=getBattleBackground(challenge.subject);
@@ -976,6 +986,29 @@ function renderBattleMain(){
     <div class="battle-pet-side"><div class="battle-pet-name">${attributeIconHtml(getPetAttribute(pet),26)} ${esc(pet.name)} <span class="small">【${esc(getPetAttribute(pet))}】</span></div><div id="battlePetSprite" class="battle-pet-sprite">${getPetImage(pet.petId,pet.stage)?`<img src="${getPetImage(pet.petId,pet.stage)}">`:'🐾'}</div></div>
     <div class="battle-monster-side"><div class="battle-monster-name">${esc((challenge.monsterCfg||{}).name||('怪物 '+(challenge.monsterNo||1)))}</div><div id="battleMonsterSprite" class="battle-monster-sprite">${(challenge.monsterCfg||{}).image?`<img src="${esc((challenge.monsterCfg||{}).image)}" alt="${esc((challenge.monsterCfg||{}).name||'怪物')}">`:'👾'}</div><div class="hpbar"><div style="width:${Math.max(0,mhp/mmax*100)}%"></div></div><small>HP ${Math.ceil(mhp)} / ${mmax}</small></div>
   </div>`;
+  updateBattleStageV610_(pet);
+}
+function updateBattleSpriteV610_(root,src,fallback){
+  if(!root)return;
+  const previous=root.querySelector('img');
+  if(src){if(previous){if(previous.getAttribute('src')!==src)previous.setAttribute('src',src);}else{root.innerHTML='';const image=document.createElement('img');image.src=src;root.appendChild(image);}}
+  else if(previous||root.textContent!==fallback)root.textContent=fallback;
+}
+function updateBattleStageV610_(pet){
+  const scene=document.getElementById('battleScene'),stage=scene?.querySelector('.battle-main-scene');if(!stage)return;
+  const hp=Math.max(0,Number(challenge.monsterHp??challenge.monsterMaxHp??100)),max=Math.max(1,Number(challenge.monsterMaxHp||100));
+  const bg=getBattleBackground(challenge.subject)?.image||'';
+  if(stage.dataset.background!==undefined&&stage.dataset.background!==bg)stage.style.backgroundImage=bg?`url(${JSON.stringify(bg)})`:'';
+  stage.dataset.background=bg;
+  const status=scene.querySelector('.battle-status'),statusKey=[challenge.subject,challenge.monsterNo,challenge.status?.correct,challenge.status?.wrong].join(':');
+  if(status.dataset.key!==statusKey){status.innerHTML=`<div><b>${esc(challenge.subject)}對戰</b>　怪物 ${challenge.monsterNo||1}</div><div>答對 ${challenge.status?.correct||0}　<span class="lives">${'❤️'.repeat(Math.max(0,3-(challenge.status?.wrong||0)))}${'🖤'.repeat(challenge.status?.wrong||0)}</span></div>`;status.dataset.key=statusKey;}
+  const name=scene.querySelector('.battle-pet-name'),petKey=[pet.petId,pet.name,getPetAttribute(pet)].join(':');
+  if(name.dataset.key!==petKey){name.innerHTML=`${attributeIconHtml(getPetAttribute(pet),26)} ${esc(pet.name)} <span class="small">【${esc(getPetAttribute(pet))}】</span>`;name.dataset.key=petKey;}
+  updateBattleSpriteV610_(document.getElementById('battlePetSprite'),getPetImage(pet.petId,pet.stage),'🐾');
+  updateBattleSpriteV610_(document.getElementById('battleMonsterSprite'),challenge.monsterCfg?.image||'','👾');
+  scene.querySelector('.battle-monster-name').textContent=challenge.monsterCfg?.name||('怪物 '+(challenge.monsterNo||1));
+  scene.querySelector('.hpbar>div').style.width=Math.max(0,hp/max*100)+'%';
+  scene.querySelector('.battle-monster-side small').textContent=`HP ${Math.ceil(hp)} / ${max}`;
 }
 function playPetAttackAnimation(damage){
   return new Promise(resolve=>{
@@ -984,7 +1017,7 @@ function playPetAttackAnimation(damage){
     if(mainMode!=='battle'||!pet||!mon||!root){resolve(false);return;}
     const finish=result=>{BATTLE_ANIMATIONS_V600.delete(finish);resolve(result);};
     BATTLE_ANIMATIONS_V600.add(finish);
-    pet.classList.remove('attack-lunge');void pet.offsetWidth;pet.classList.add('attack-lunge');
+    pet.classList.remove('attack-lunge');void getComputedStyle(pet).animationName;pet.classList.add('attack-lunge');
     battleTimeoutV600_(()=>{
       if(epoch!==BATTLE_VIEW_EPOCH_V600)return;
       mon.classList.remove('hit-shake');void mon.offsetWidth;mon.classList.add('hit-shake');
@@ -1343,6 +1376,9 @@ async function chooseChallenge(subject){
   renderBattleMain();
   const viewEpoch=BATTLE_VIEW_EPOCH_V600;
   const isCurrent=()=>account===currentId&&viewEpoch===BATTLE_VIEW_EPOCH_V600&&mainMode==='battle'&&challenge.subject===subject;
+  // Independent reads overlap; neither can change the selected view after navigation.
+  const configLoading=ensureBattleConfigsV5106();
+  const savedLoading=gsRaw('getBattleProgressV5105',account,subject).catch(()=>null);
 
   if(!QUESTION_BANK_LOADED[subject]){
     battleControlsV600_().innerHTML=`<h3>⚔️ ${esc(subject)}對戰</h3><div class="petcard">載入${esc(subject)}題庫中…</div>`;
@@ -1357,11 +1393,11 @@ async function chooseChallenge(subject){
     return;
   }
 
-  await ensureBattleConfigsV5106();
+  await configLoading;
 
   if(!isCurrent())return;
   let saved=null;
-  try{saved=await gsRaw('getBattleProgressV5105',currentId,subject);}catch(e){}
+  saved=await savedLoading;
   if(!isCurrent())return;
   challenge.savedProgress=saved&&saved.exists?saved:null;
 
@@ -1436,7 +1472,7 @@ async function resumeSavedChallengeV5105(){
     challenge.selectedSkill=null;
     challenge.question=null;
     challenge.lastMsg=`<span class="success">💾 已讀取存檔，從怪物 ${challenge.monsterNo} 繼續。</span>`;
-    challenge.active=true;switchMainMode('battle');renderBattle();
+    BATTLE_SKILLS_SESSION_V610=null;challenge.active=true;switchMainMode('battle');renderBattle();
   }catch(e){alert(e.message||e);}
 }
 
@@ -1475,7 +1511,7 @@ async function startChallengeUI(){
     challenge.monsterMaxHp=getMonsterHp(challenge.monsterCfg,challenge.monsterNo);
     challenge.monsterHp=challenge.monsterMaxHp;
     challenge.selectedSkill=null;challenge.question=null;challenge.lastMsg='';
-    challenge.active=true;switchMainMode('battle');renderBattle();
+    BATTLE_SKILLS_SESSION_V610=null;challenge.active=true;switchMainMode('battle');renderBattle();
   }catch(e){alert(e.message||e);}
 }
 function battleSkillPowerV600_(skill){return '威力 '+esc(skill.finalDamage||skill.damage)+(BigInt(skill.bonusDamage||'0')>0?'（強化 +'+esc(skill.bonusDamage)+'）':'');}
@@ -1484,8 +1520,16 @@ function renderBattle(){
   const pet=state.pets.find(p=>String(p.petId)===String(challenge.petId));if(!pet)return;
   renderBattleMain();
   const skillScroll=battleControlsV600_().querySelector('.skill-grid')?.scrollTop||0;
-  const skills=getConfiguredPetSkills(pet),locked=challenge.status?.locked||Number(challenge.status?.wrong||0)>=3;
-  battleControlsV600_().innerHTML=`<div class="battle-controls-heading"><h2>⚔️ ${esc(challenge.subject)}・${esc(pet.name)} Lv.${pet.level}</h2><span>累積 EXP ${Number(challenge.status?.exp||0)}</span></div>
+  const skills=battleSkillsV610_(pet),locked=challenge.status?.locked||Number(challenge.status?.wrong||0)>=3;
+  const controls=battleControlsV600_(),key=[challenge.subject,pet.petId,pet.level,!!locked].join(':');
+  if(controls.dataset.battleKey===key){
+    controls.querySelector('.battle-controls-heading>span').textContent=`累積 EXP ${Number(challenge.status?.exp||0)}`;
+    document.getElementById('battleResult').innerHTML=challenge.lastMsg||'選擇技能，再回答題目發動攻擊。';
+    controls.querySelectorAll('button,input').forEach(el=>el.disabled=!!challenge.saving);
+    renderBattleQuestion();return;
+  }
+  controls.dataset.battleKey=key;
+  controls.innerHTML=`<div class="battle-controls-heading"><h2>⚔️ ${esc(challenge.subject)}・${esc(pet.name)} Lv.${pet.level}</h2><span>累積 EXP ${Number(challenge.status?.exp||0)}</span></div>
     <div id="battleResult" class="battle-result" role="status">${challenge.lastMsg||'選擇技能，再回答題目發動攻擊。'}</div>
     ${locked?'<div class="qbox"><h3>今日對戰結束</h3><p>已達 3 次錯誤，明早 7:00 後重置。</p><button class="btn gray" onclick="renderChallengeHome()">返回挑戰首頁</button></div>':`<div class="battle-operation-grid"><section class="battle-skills"><h3>選擇技能</h3><div class="skill-grid">${skills.map(skill=>`<button class="btn purple skill-btn ${challenge.selectedSkill?.id===skill.id?'selected':''}" aria-pressed="${challenge.selectedSkill?.id===skill.id}" onclick="useBattleSkill('${skill.id}')"><b>${skill.kind==='general'?'⚔️':attributeIconHtml(skill.attribute||getPetAttribute(pet),20)} ${esc(skill.name)}</b><br><span>${battleSkillPowerV600_(skill)}</span></button>`).join('')}</div></section><section id="battleQuestionArea" class="battle-question-area" aria-label="題目與選項">${challenge.question&&challenge.selectedSkill?battleQuestionHtmlV600_():'<div class="battle-question-empty">選擇左側技能，即可開始答題。</div>'}</section></div>`}
     <div class="battle-exit-actions nav"><button class="btn blue" ${challenge.saving?'disabled':''} onclick="saveBattleAndExitV5105(this)">💾 儲存並離開</button><button class="btn gray" onclick="finishChallengeUI()">結束對戰</button><button class="btn secondary" onclick="switchTab('home',document.querySelector('[data-tab=home]'))">🏠 小屋</button><button class="btn gray" onclick="logout()">登出</button></div>`;
@@ -1494,7 +1538,7 @@ function renderBattle(){
 function useBattleSkill(skillId){
   if(mainMode!=='battle'||!challenge.active||challenge.answering||challenge.saving||challenge.status?.locked||Number(challenge.status?.wrong||0)>=3)return;
   const pet=state.pets.find(p=>String(p.petId)===String(challenge.petId));
-  const skill=getConfiguredPetSkills(pet).find(s=>String(s.id)===String(skillId));if(!skill)return;
+  const skill=battleSkillsV610_(pet).find(s=>String(s.id)===String(skillId));if(!skill)return;
   challenge.selectedSkill=skill;
   if(!challenge.questions?.length||challenge.qIndex>=challenge.questions.length){loadMoreBattleQuestions();return;}
   challenge.question=challenge.questions[challenge.qIndex];renderBattleQuestion();
@@ -1533,7 +1577,12 @@ function questionImageHtml(q){
   </div>`;
 }
 
-function renderBattleQuestion(){renderBattle();}
+function renderBattleQuestion(){
+  if(mainMode!=='battle'||!challenge.active||challenge.answering)return;
+  const area=document.getElementById('battleQuestionArea');if(!area)return;
+  area.innerHTML=challenge.question&&challenge.selectedSkill?battleQuestionHtmlV600_():'<div class="battle-question-empty">選擇左側技能，即可開始答題。</div>';
+  battleControlsV600_().querySelectorAll('.skill-btn').forEach(btn=>{const selected=btn.getAttribute('onclick')===`useBattleSkill('${challenge.selectedSkill?.id}')`;btn.classList.toggle('selected',selected);btn.setAttribute('aria-pressed',String(selected));});
+}
 function battleQuestionHtmlV600_(){
   const q=challenge.question,skill=challenge.selectedSkill;
   if(!q||!skill)return '';
@@ -1589,8 +1638,9 @@ async function sendBattleAnswer(ans){
     challenge.monsterMaxHp=getMonsterHp(challenge.monsterCfg,challenge.monsterNo);
     challenge.monsterHp=challenge.monsterMaxHp;
   }
+  const animation=playPetAttackAnimation(damage);
   if(challenge.pending.length>=12)flushChallengeAnswers(false);
-  await playPetAttackAnimation(damage);if(epoch===BATTLE_VIEW_EPOCH_V600)challenge.answering=false;
+  await animation;if(epoch===BATTLE_VIEW_EPOCH_V600)challenge.answering=false;
   if(epoch===BATTLE_VIEW_EPOCH_V600&&mainMode==='battle')renderBattle();
 }
 async function loadMoreBattleQuestions(){
@@ -1946,6 +1996,8 @@ async function useBackgroundFromShop(id){
   }
 }
 function logout(){
+  try{if(currentId&&challenge.pending?.length)captureChallengeBatchV600_(currentId);}catch(e){alert('答題紀錄未能保存：'+(e.message||e));return;}
+  flushChallengeAnswers(false);
   cleanupFurnitureViewV610();document.getElementById('studentLayout')?.classList.remove('furniture-mode');
   cleanupBattleViewV600_();challenge.active=false;
   document.getElementById('studentLayout')?.classList.remove('battle-mode');

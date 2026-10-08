@@ -905,12 +905,35 @@ function startChallengeBatch(studentId,subject,petId){
 /** 一次同步多題答案；伺服器會重新驗證答案，不直接相信前端計分 */
 // 每批一列，沿用獎勵紀錄；不把永久歷史塞進單一儲存格或快取。
 const CHALLENGE_BATCH_HEADERS_V600=['答題批次ID','答題科目','答題寵物ID','答題內容','答題交易狀態','答題結果'];
+// Battle reads keep authoritative mutable values inside the existing shared lock.
+// Advanced Sheets batches scattered student rows; mock/legacy runtimes retain a safe fallback.
+function battleReadRangesV610_(sh,ranges){
+  if(!ranges.length)return [];
+  if(typeof Sheets==='undefined'||!Sheets.Spreadsheets?.Values?.batchGet)return ranges.map(r=>sh.getRange(r.row,r.col,r.count,r.width).getValues());
+  const prefix="'"+sh.getName().replace(/'/g,"''")+"'!";
+  const a1=ranges.map(r=>prefix+adminColumnNameV610_(r.col)+r.row+':'+adminColumnNameV610_(r.col+r.width-1)+(r.row+r.count-1));
+  const data=[];
+  // Avoid oversized batchGet URLs for long, interleaved enhancement histories.
+  for(let i=0;i<a1.length;i+=80)data.push(...(Sheets.Spreadsheets.Values.batchGet(SpreadsheetApp.getActive().getId(),{ranges:a1.slice(i,i+80),valueRenderOption:'UNFORMATTED_VALUE'}).valueRanges||[]));
+  return ranges.map((r,index)=>Array.from({length:r.count},(_,i)=>Array.from({length:r.width},(_,j)=>data[index]?.values?.[i]?.[j]??'')));
+}
+function battleStudentRowsV610_(sh,studentId){
+  if(!sh||sh.getLastRow()<2)return [];
+  const hm=headerMap_(sh),ids=battleReadRangesV610_(sh,[{row:2,col:hm['學號'],count:sh.getLastRow()-1,width:1}])[0],ranges=[];
+  ids.forEach((r,i)=>{if(String(r[0]).trim()!==studentId)return;const last=ranges[ranges.length-1],row=i+2;if(last&&last.row+last.count===row)last.count++;else ranges.push({row,col:1,count:1,width:sh.getLastColumn()});});
+  const values=battleReadRangesV610_(sh,ranges),rows=[];
+  ranges.forEach((range,index)=>values[index].forEach((r,i)=>{const obj={_row:range.row+i};Object.keys(hm).forEach(key=>obj[key]=r[hm[key]-1]);rows.push(obj);}));
+  return rows;
+}
 function challengeBatchRecordsV600_(studentId,batchId){
   const sh=SpreadsheetApp.getActive().getSheetByName(SHEETS.REWARDS),hm=headerMap_(sh);
   if(!CHALLENGE_BATCH_HEADERS_V600.every(h=>hm[h]))throw new Error('請老師先執行 setupOrUpgradeV600() 補上答題批次欄位');
   if(sh.getLastRow()<2)return [];
-  const n=sh.getLastRow()-1,ids=sh.getRange(2,hm['學號'],n,1).getValues(),bids=sh.getRange(2,hm['答題批次ID'],n,1).getValues(),statuses=sh.getRange(2,hm['答題交易狀態'],n,1).getValues(),rows=[];
-  for(let i=0;i<n;i++)if(String(ids[i][0]).trim()===studentId && bids[i][0] && (String(bids[i][0])===String(batchId||'')||statuses[i][0]==='SUBMITTED'))rows.push({...rowObject_(sh,sh.getRange(i+2,1,1,sh.getLastColumn()).getValues()[0]),_row:i+2});
+  const n=sh.getLastRow()-1,columns=battleReadRangesV610_(sh,['學號','答題批次ID','答題交易狀態'].map(key=>({row:2,col:hm[key],count:n,width:1}))),ids=columns[0],bids=columns[1],statuses=columns[2],rows=[];
+  const matches=[];
+  for(let i=0;i<n;i++)if(String(ids[i][0]).trim()===studentId && bids[i][0] && (String(bids[i][0])===String(batchId||'')||statuses[i][0]==='SUBMITTED'))matches.push({row:i+2,col:1,count:1,width:sh.getLastColumn()});
+  const values=battleReadRangesV610_(sh,matches);
+  matches.forEach((range,i)=>{const record={_row:range.row};Object.keys(hm).forEach(key=>record[key]=values[i][0][hm[key]-1]);rows.push(record);});
   return rows;
 }
 function assertNoPendingChallengeBatchV600_(studentId,petId){
@@ -945,10 +968,10 @@ function syncChallengeBatch(studentId,subject,petId,answers,batchId){
     if(records.some(r=>r['答題交易狀態']==='SUBMITTED'))throw new Error('請先確認上一筆答題批次，不會重複計分');
     requireMailSheetsServiceV600_();
     const ss=SpreadsheetApp.getActive(),ps=ss.getSheetByName(SHEETS.PETS),ph=headerMap_(ps);
-    const pet=readRowsWithPositionV600_(ps).find(p=>String(p['學號']).trim()===id && String(p['寵物ID'])===pid);
+    const pet=battleStudentRowsV610_(ps,id).find(p=>String(p['寵物ID'])===pid);
     if(!pet)throw new Error('這不是你的寵物');
     const cs=ss.getSheetByName(SHEETS.CHALLENGES),ch=headerMap_(cs),period=challengePeriodKey_(new Date());
-    const record=readRowsWithPositionV600_(cs).find(r=>String(r['週期'])===period&&String(r['學號']).trim()===id&&String(r['科目'])===sub);
+    const record=battleStudentRowsV610_(cs,id).find(r=>String(r['週期'])===period&&String(r['科目'])===sub);
     let wrong=Number(record?.['錯誤數']||0),correct=Number(record?.['答對數']||0),totalExp=Number(record?.['總EXP']||0),gainedTotal=0,processed=0;
     const qMap={};cachedQuestionObjectsDisplay_().forEach(q=>qMap[String(q['題目ID'])]=q);
     for(const answer of normalized){
@@ -961,9 +984,10 @@ function syncChallengeBatch(studentId,subject,petId,answers,batchId){
     const result={ok:true,batchId:bid,processed,gained:gainedTotal,status:{correct,wrong,exp:totalExp,locked:wrong>=3},locked:wrong>=3,resetAt:nextResetText_()};
     const rewards=ss.getSheetByName(SHEETS.REWARDS),rh=headerMap_(rewards);
     // 先永久標記 SUBMITTED。結果不明時絕不盲目重送原子寫入。
+    const transaction={_row:rewards.getLastRow()+1};
     appendObject_(rewards,{'時間':new Date(),'學號':id,'金幣變動':0,'EXP變動':0,'原因':'答題同步批次','答題批次ID':bid,'答題科目':sub,'答題寵物ID':pid,'答題內容':content,'答題交易狀態':'SUBMITTED','答題結果':''});SpreadsheetApp.flush();
-    const transaction=challengeBatchRecordsV600_(id,bid).find(r=>String(r['答題批次ID'])===bid);
-    if(!transaction)throw new Error('無法確認答題交易列，停止提交');
+    // Shared lock fixes the reserved row; verify only that row, not all historical batches.
+    if(String(rewards.getRange(transaction._row,rh['答題批次ID']).getValue())!==bid)throw new Error('無法確認答題交易列，停止提交');
     const requests=[],challengeRow=record?record._row:cs.getLastRow()+1;
     if(!record){
       if(challengeRow>cs.getMaxRows())requests.push({appendDimension:{sheetId:cs.getSheetId(),dimension:'ROWS',length:challengeRow-cs.getMaxRows()}});
@@ -2675,7 +2699,7 @@ function getSkillEnhancementsV600_(studentId){
   const sh=SpreadsheetApp.getActive().getSheetByName(SHEETS.SKILL_ENHANCEMENTS);
   if(!sh)return {};
   const bonuses={};
-  readObjects_(sh).filter(r=>String(r['學號']).trim()===id && r['狀態']==='DONE').forEach(r=>{
+  battleStudentRowsV610_(sh,id).filter(r=>r['狀態']==='DONE').forEach(r=>{
     const pet=String(r['寵物ID']),skill=String(r['技能ID']);
     bonuses[pet]=bonuses[pet]||{};
     bonuses[pet][skill]=(BigInt(bonuses[pet][skill]||'0')+BigInt(String(r['傷害加成']||'0'))).toString();
