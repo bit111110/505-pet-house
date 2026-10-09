@@ -6,7 +6,8 @@ async function run(){
  try{
   for(const [width,height] of [[1440,1000],[768,1024],[390,844]]){
    const context=await browser.newContext({viewport:{width,height}}),calls=[],receipts=new Map(),errors=[];
-   const students=Array.from({length:25},(_,i)=>({id:'505'+String(i+1).padStart(2,'0'),seat:i+1,name:'學生'+(i+1),coins:1000}));
+   const studentIds=Array.from({length:26},(_,i)=>'505'+String(i+1).padStart(2,'0')).filter(id=>id!=='50521');
+   const students=studentIds.map(id=>({id,seat:Number(id.slice(-2)),name:id==='50526'?'':'學生'+id,coins:1000}));
    const serverItems=new Map();let loseNext=false;
    await context.route('**/*',route=>{
     const file=new URL(route.request().url()).pathname.slice(1)||'index.html';
@@ -18,8 +19,9 @@ async function run(){
     page.on('pageerror',e=>errors.push(e.message));
     await page.exposeFunction('mockAdminAPI',async(action,args)=>{
      calls.push({action,args});assert.equal(args[0],credential);
-     if(action==='getAdminDataSecure')return {students:students.map(s=>({...s})),items:[{'道具ID':'EXP010','名稱':'經驗糖果'},{'道具ID':'STONE_GRASS','名稱':'草之石'}],pets:[]};
+     if(action==='getAdminDataSecure')return {students:[...students.map(s=>({...s})),{id:'50521',name:'排除學生'},{id:'',name:''},{id:'invalid',name:'無效學號'},{id:'50527',name:''},{id:'50501',name:'重複學生'}],items:[{'道具ID':'EXP010','名稱':'經驗糖果'},{'道具ID':'STONE_GRASS','名稱':'草之石'}],pets:[]};
      if(!['grantCoinsBatchV610','grantItemsBatchV610'].includes(action))throw Error('unexpected '+action);
+     assert.deepEqual((action==='grantCoinsBatchV610'?args[1]:args[2]).map(e=>e.studentId),studentIds,'both modes submit only the fixed 25 IDs');
      await new Promise(resolve=>setTimeout(resolve,60));
      const coins=action==='grantCoinsBatchV610',item=coins?'':args[1],entries=coins?args[1]:args[2],rid=coins?args[2]:args[3];
      if(receipts.has(rid))return {...receipts.get(rid),replayed:true};
@@ -37,6 +39,8 @@ async function run(){
    };
    const page=await context.newPage();await setup(page);
    assert.equal(await page.locator('.admin-batch-value').count(),25);
+   assert.equal(await page.locator('#adminBatchV610 tbody tr').last().locator('td').nth(2).innerText(),'老師測試');
+   assert.deepEqual(await page.locator('#adminBatchV610 th').allTextContents(),['座號','學號','姓名','金額']);
    assert.equal(await page.locator('#adminBatchV610 tbody tr').first().locator('td').first().innerText(),'01');
    await page.getByRole('button',{name:'全班填入 100',exact:true}).click();
    await page.locator('.admin-batch-value[data-student="50502"]').fill('50');
