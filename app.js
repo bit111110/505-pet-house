@@ -1160,7 +1160,7 @@ async function renderUpgrade(){
   if(!state.pets.some(p=>p.petId===UPGRADE_PET_V600))UPGRADE_PET_V600=state.pets[0].petId;
   const expItems=inventory.filter(x=>x.config?.['類型']==='經驗型');
   panel.innerHTML='<h3>⬆️ 升級系統</h3><p>在左側大型主畫面選擇寵物與升級模式。</p><p class="small">經驗糖果提升等級；同屬性之石永久強化一個已解鎖技能。</p><button class="btn gray" onclick="UPGRADE_AT_V600=0;renderUpgrade()">更新升級資料</button>';
-  root.innerHTML=`<div class="upgrade-heading"><div><span class="small">V6.0 · 升級工坊</span><h2>讓夥伴變得更強</h2></div><div class="upgrade-modes"><button class="btn upgrade-mode-btn ${UPGRADE_MODE_V600==='exp'?'blue':'gray'}" onclick="setUpgradeModeV600('exp')">🍬 經驗糖果</button><button class="btn upgrade-mode-btn ${UPGRADE_MODE_V600==='stone'?'purple':'gray'}" onclick="setUpgradeModeV600('stone')">💎 屬性之石</button></div></div>
+  root.innerHTML=`<div class="upgrade-heading"><div><span class="small">V6.1 · 升級工坊</span><h2>讓夥伴變得更強</h2></div><div class="upgrade-modes"><button class="btn upgrade-mode-btn ${UPGRADE_MODE_V600==='exp'?'blue':'gray'}" onclick="setUpgradeModeV600('exp')">🍬 經驗糖果</button><button class="btn upgrade-mode-btn ${UPGRADE_MODE_V600==='stone'?'purple':'gray'}" onclick="setUpgradeModeV600('stone')">💎 屬性之石</button></div></div>
     <div class="upgrade-layout"><div class="upgrade-pet">
     <label>選擇寵物</label>
     <select id="upPet" class="full" ${EXP_USE_BUSY||STONE_BUSY_V600?'disabled':''}>${state.pets.map(p=>`<option value="${esc(p.petId)}" ${p.petId===UPGRADE_PET_V600?'selected':''}>${esc(p.name)} Lv.${p.level}</option>`).join('')}</select>
