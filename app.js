@@ -2085,6 +2085,45 @@ async function loadAdmin(){
 let ADMIN_BATCH_MODE_V610='COINS',ADMIN_BATCH_BUSY_V610=false,ADMIN_BATCH_PREVIEW_V610=null;
 let ADMIN_BATCH_DRAFT_V610={COINS:{},ITEMS:{}},ADMIN_BATCH_ITEM_V610='',ADMIN_BATCH_RESULT_V610=null;
 const ADMIN_BATCH_PENDING_PREFIX_V610='petHouseAdminBatchV610:';
+let ADMIN_BATCH_EVENTS_BOUND_V610=false;
+function bindAdminBatchEventsV610(){
+  if(ADMIN_BATCH_EVENTS_BOUND_V610)return;
+  // document survives both adminArea and batch-card innerHTML replacement.
+  document.addEventListener('click',handleAdminBatchClickV610);
+  document.addEventListener('input',handleAdminBatchInputV610);
+  document.addEventListener('change',handleAdminBatchInputV610);
+  ADMIN_BATCH_EVENTS_BOUND_V610=true;
+}
+function showAdminBatchEventErrorV610(error){
+  showAdminBatchResultV610({ok:false,message:String(error.message||error)});
+  document.getElementById('adminBatchResultV610')?.scrollIntoView({block:'nearest'});
+}
+async function handleAdminBatchClickV610(event){
+  const button=event.target instanceof Element?event.target.closest('#adminBatchV610 button[data-admin-batch-action]'):null;
+  if(!button||button.disabled||ADMIN_BATCH_BUSY_V610)return;
+  event.preventDefault();
+  try{
+    switch(button.dataset.adminBatchAction){
+      case 'mode':setAdminBatchModeV610(button.dataset.mode);break;
+      case 'fill':fillAdminBatchV610(Number(button.dataset.quantity));break;
+      case 'preview':previewAdminBatchV610();break;
+      case 'cancel':cancelAdminBatchV610();break;
+      case 'submit':
+        if(!ADMIN_BATCH_PREVIEW_V610){showAdminBatchEventErrorV610('請先按「確認批次發放」確認本次內容。');return;}
+        await submitAdminBatchV610();break;
+      case 'retry':await submitAdminBatchV610(button.dataset.requestId);break;
+    }
+  }catch(error){showAdminBatchEventErrorV610(error);}
+}
+function handleAdminBatchInputV610(event){
+  const input=event.target;
+  if(!(input instanceof Element)||!input.closest('#adminBatchV610')||input.disabled||ADMIN_BATCH_BUSY_V610)return;
+  if(!(event.type==='input'&&input.matches('.admin-batch-value'))&&!(event.type==='change'&&input.id==='adminBatchItemV610'))return;
+  try{
+    captureAdminBatchDraftV610();cancelAdminBatchV610();
+    if(input.id==='adminBatchItemV610')renderAdminItemPreviewV610();
+  }catch(error){showAdminBatchEventErrorV610(error);}
+}
 let ADMIN_BATCH_LOADING_TIMER_V610=null,ADMIN_BATCH_VIEW_INERT_V610=false;
 function showAdminBatchLoadingV610(){
   hideAdminBatchLoadingV610();
@@ -2126,17 +2165,18 @@ function setAdminBatchModeV610(mode){
 }
 function renderAdminBatchV610(){
   const root=document.getElementById('adminBatchV610');if(!root||!adminData)return;
+  bindAdminBatchEventsV610();
   let pending=[];try{pending=pendingAdminBatchClientV610();}catch(e){root.textContent='無法讀取批次重試資料，請先檢查瀏覽器儲存空間。';return;}
   const mode=ADMIN_BATCH_MODE_V610,coins=mode==='COINS';
   const students=[...adminData.students].sort((a,b)=>Number(a.seat||999)-Number(b.seat||999)||String(a.id).localeCompare(String(b.id)));
   if(!adminData.items.some(x=>String(x['道具ID'])===ADMIN_BATCH_ITEM_V610))ADMIN_BATCH_ITEM_V610=String(adminData.items[0]?.['道具ID']||'');
-  root.innerHTML=`<h3>👩‍🏫 全班批次發放</h3><div class="row"><button class="btn ${coins?'blue':'gray'} admin-batch-control" onclick="setAdminBatchModeV610('COINS')">批次發金幣</button><button class="btn ${coins?'gray':'purple'} admin-batch-control" onclick="setAdminBatchModeV610('ITEMS')">批次發道具</button></div>
-    ${pending.map(p=>`<p class="admin-batch-pending"><b>有一筆發放尚未確認</b> · ${p.mode==='COINS'?'金幣':'道具'}<br><button class="btn orange admin-batch-retry" data-request-id="${esc(p.requestId)}" onclick="submitAdminBatchV610('${esc(p.requestId)}')">以原批次重試</button></p>`).join('')}
-    ${coins?'':`<p><span id="adminItemPreviewV610"></span> <label>道具 <select id="adminBatchItemV610" class="admin-batch-control" onchange="captureAdminBatchDraftV610();cancelAdminBatchV610();renderAdminItemPreviewV610()">${adminData.items.map(x=>`<option value="${esc(x['道具ID'])}" ${String(x['道具ID'])===ADMIN_BATCH_ITEM_V610?'selected':''}>${esc(x['名稱'])}</option>`).join('')}</select></label></p>`}
-    <div class="row" style="margin-top:10px">${(coins?[100]:[1,5]).map(n=>`<button class="btn secondary admin-batch-control" onclick="fillAdminBatchV610(${n})">全班填入 ${n}</button>`).join('')}<button class="btn gray admin-batch-control" onclick="fillAdminBatchV610(0)">全部清空</button></div>
+  root.innerHTML=`<h3>👩‍🏫 全班批次發放</h3><div class="row"><button id="adminBatchCoinsV610" type="button" class="btn ${coins?'blue':'gray'} admin-batch-control" data-admin-batch-action="mode" data-mode="COINS" aria-pressed="${coins}">批次發金幣</button><button id="adminBatchItemsV610" type="button" class="btn ${coins?'gray':'purple'} admin-batch-control" data-admin-batch-action="mode" data-mode="ITEMS" aria-pressed="${!coins}">批次發道具</button></div>
+    ${pending.map(p=>`<p class="admin-batch-pending"><b>有一筆發放尚未確認</b> · ${p.mode==='COINS'?'金幣':'道具'}<br><button type="button" class="btn orange admin-batch-retry" data-request-id="${esc(p.requestId)}" data-admin-batch-action="retry">以原批次重試</button></p>`).join('')}
+    ${coins?'':`<p><span id="adminItemPreviewV610"></span> <label>道具 <select id="adminBatchItemV610" class="admin-batch-control">${adminData.items.map(x=>`<option value="${esc(x['道具ID'])}" ${String(x['道具ID'])===ADMIN_BATCH_ITEM_V610?'selected':''}>${esc(x['名稱'])}</option>`).join('')}</select></label></p>`}
+    <div class="row" style="margin-top:10px">${(coins?[100]:[1,5]).map(n=>`<button type="button" class="btn secondary admin-batch-control" data-admin-batch-action="fill" data-quantity="${n}">全班填入 ${n}</button>`).join('')}<button type="button" class="btn gray admin-batch-control" data-admin-batch-action="fill" data-quantity="0">全部清空</button></div>
     <p class="small">發放數值會加到既有資產；0 或空白代表略過。每位學生可以填不同數值。</p>
-    <div style="overflow:auto"><table class="admin-table"><thead><tr><th>座號</th><th>學號</th><th>${coins?'金額':'數量'}</th></tr></thead><tbody>${students.map(s=>`<tr><td>${esc(String(s.seat||'').padStart(2,'0'))}</td><td>${esc(s.id)}<br><span class="small">${esc(s.name)}</span></td><td><input type="number" min="0" step="1" inputmode="numeric" class="admin-batch-value admin-batch-control" data-student="${esc(s.id)}" value="${esc(ADMIN_BATCH_DRAFT_V610[mode][s.id]??'0')}" style="width:90px" oninput="captureAdminBatchDraftV610();cancelAdminBatchV610()"></td></tr>`).join('')}</tbody></table></div>
-    <button class="btn purple admin-batch-control" style="margin-top:12px" onclick="previewAdminBatchV610()">確認批次發放</button><div id="adminBatchReviewV610"></div><div id="adminBatchResultV610" style="margin-top:10px"></div>`;
+    <div style="overflow:auto"><table class="admin-table"><thead><tr><th>座號</th><th>學號</th><th>${coins?'金額':'數量'}</th></tr></thead><tbody>${students.map(s=>`<tr><td>${esc(String(s.seat||'').padStart(2,'0'))}</td><td>${esc(s.id)}<br><span class="small">${esc(s.name)}</span></td><td><input type="number" min="0" step="1" inputmode="numeric" class="admin-batch-value admin-batch-control" data-student="${esc(s.id)}" value="${esc(ADMIN_BATCH_DRAFT_V610[mode][s.id]??'0')}" style="width:90px"></td></tr>`).join('')}</tbody></table></div>
+    <button id="adminBatchPreviewV610" type="button" class="btn purple admin-batch-control" style="margin-top:12px" data-admin-batch-action="preview">確認批次發放</button><div id="adminBatchReviewV610"></div><div id="adminBatchResultV610" aria-live="polite" style="margin-top:10px"></div>`;
   renderAdminItemPreviewV610();
   setAdminBatchBusyV610(ADMIN_BATCH_BUSY_V610);showAdminBatchResultV610(ADMIN_BATCH_RESULT_V610);
 }
@@ -2164,7 +2204,7 @@ function previewAdminBatchV610(){
   ADMIN_BATCH_PREVIEW_V610={mode,itemId:mode==='ITEMS'?ADMIN_BATCH_ITEM_V610:'',entries,reason:'課堂批次獎勵'};
   const item=adminData.items.find(x=>String(x['道具ID'])===ADMIN_BATCH_ITEM_V610),label=mode==='COINS'?'金幣':item?.['名稱']||'道具';
   const review=document.getElementById('adminBatchReviewV610');
-  review.innerHTML=`<div class="petcard"><h4>確認發放：${esc(label)}</h4><p>本次 ${entries.filter(r=>r[field]>0).length} 位學生，合計 ${entries.reduce((n,r)=>n+BigInt(r[field]),0n)} ${mode==='COINS'?'金幣':'個'}。</p>${entries.filter(r=>r[field]>0).map(r=>`<div>${esc(r.studentId)}：+${r[field]}</div>`).join('')}<p>確認後一次送出整批。</p><button class="btn purple admin-batch-control" onclick="submitAdminBatchV610()">確定發放</button> <button class="btn gray admin-batch-control" onclick="cancelAdminBatchV610()">返回修改</button></div>`;
+  review.innerHTML=`<div class="petcard"><h4>確認發放：${esc(label)}</h4><p>本次 ${entries.filter(r=>r[field]>0).length} 位學生，合計 ${entries.reduce((n,r)=>n+BigInt(r[field]),0n)} ${mode==='COINS'?'金幣':'個'}。</p>${entries.filter(r=>r[field]>0).map(r=>`<div>${esc(r.studentId)}：+${r[field]}</div>`).join('')}<p>確認後一次送出整批。</p><button id="adminBatchSubmitV610" type="button" class="btn purple admin-batch-control" data-admin-batch-action="submit">確定發放</button> <button type="button" class="btn gray admin-batch-control" data-admin-batch-action="cancel">返回修改</button></div>`;
 }
 async function submitAdminBatchV610(requestId){
   if(ADMIN_BATCH_BUSY_V610)return;
