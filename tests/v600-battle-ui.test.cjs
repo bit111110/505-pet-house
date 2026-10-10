@@ -82,7 +82,7 @@ async function run(){
    await page.evaluate(()=>{switchTab('home');releaseLookup({exists:true,petId:'PET013'});});await page.evaluate(()=>lookup);
    assert.equal(await page.locator('#battleMain').innerHTML(),'');
    // Cold question-bank loading does not replace the subject-selection view mid-request.
-   await page.evaluate(()=>{renderChallengeHome();delete QUESTION_BANK_LOADED['自然'];delete QUESTION_BANK_CACHE['自然'];gsRaw=async action=>action==='getQuestionBankSubjectFast'?[{id:'N1',type:'選擇',text:'自然題',options:['甲','乙'],answer:'A'}]:{exists:false};});
+   await page.evaluate(()=>{renderChallengeHome();delete QUESTION_BANK_LOADED['自然'];delete QUESTION_BANK_CACHE['自然'];gsRaw=async action=>action==='getQuestionBatchV610'?{questions:[{id:'N1',type:'選擇',text:'自然題',options:['甲','乙'],answer:'A'}],remaining:0}:{exists:false};});
    await page.evaluate(()=>chooseChallenge('自然'));assert.equal(await page.locator('#chPet').count(),1,'cold bank selection completed');
    await page.evaluate(()=>startChallengeUI());assert.equal(await page.locator('#battlePetSprite').count(),1,'cold bank battle started');
    // V5.10.5 resume restores all persisted fields, including saved maximum HP.

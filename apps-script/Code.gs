@@ -666,7 +666,7 @@ function answerChallenge(studentId,subject,petId,questionId,answer){
   let totalExp=Number(rec.sheet.getRange(rec.row,rec.hm['總EXP']).getValue()||0);
   if(wrong>=3) return {ok:false,locked:true,resetAt:nextResetText_(),status:{correct,wrong,exp:totalExp}};
 
-  const qrow=cachedQuestionObjectsDisplay_().find(x=>String(x['題目ID'])===String(questionId));
+  const qrow=subjectQuestionRowsV610_(subject).find(x=>String(x['題目ID'])===String(questionId));
   if(!qrow || String(qrow['科目'])!==String(subject)) throw new Error('題目無效');
   const expected=normalizeAnswer_(qrow['答案']);
   const actual=normalizeAnswer_(answer);
@@ -730,7 +730,7 @@ function resolveQuestionImage_(x){
 }
 
 function getRandomQuestion_(subject,lastId){
-  let q=cachedQuestionObjectsDisplay_().filter(x=>String(x['科目'])===String(subject) && questionEnabled_(x));
+  let q=subjectQuestionRowsV610_(subject).filter(questionEnabled_);
   if(!q.length) return null;
   if(q.length>1) q=q.filter(x=>String(x['題目ID'])!==String(lastId));
   const x=q[Math.floor(Math.random()*q.length)];
@@ -879,7 +879,7 @@ function buyLandFast(studentId,landId){
 function getChallengeQuestionBatch(subject, excludeIds, limit){
   limit=Math.max(5,Math.min(50,Number(limit||30)));
   const ex=new Set((excludeIds||[]).map(String));
-  let rows=cachedQuestionObjectsDisplay_().filter(x=>String(x['科目'])===String(subject) && questionEnabled_(x));
+  let rows=subjectQuestionRowsV610_(subject).filter(questionEnabled_);
   if(rows.length>1){ const filtered=rows.filter(x=>!ex.has(String(x['題目ID']))); if(filtered.length) rows=filtered; }
   // 洗牌
   for(let i=rows.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[rows[i],rows[j]]=[rows[j],rows[i]];}
@@ -973,7 +973,7 @@ function syncChallengeBatch(studentId,subject,petId,answers,batchId){
     const cs=ss.getSheetByName(SHEETS.CHALLENGES),ch=headerMap_(cs),period=challengePeriodKey_(new Date());
     const record=battleStudentRowsV610_(cs,id).find(r=>String(r['週期'])===period&&String(r['科目'])===sub);
     let wrong=Number(record?.['錯誤數']||0),correct=Number(record?.['答對數']||0),totalExp=Number(record?.['總EXP']||0),gainedTotal=0,processed=0;
-    const qMap={};cachedQuestionObjectsDisplay_().forEach(q=>qMap[String(q['題目ID'])]=q);
+    const qMap={};subjectQuestionRowsV610_(sub).forEach(q=>qMap[String(q['題目ID'])]=q);
     for(const answer of normalized){
       if(wrong>=3)break;
       const q=qMap[answer.questionId];if(!q||String(q['科目'])!==sub)continue;
@@ -1921,7 +1921,103 @@ function loginFastV596(studentId,birthdayMD){
   });
 }
 
-/** 題庫一次轉成五科 JSON，CacheService 10 分鐘。 */
+const QUESTION_SUBJECTS_V610=['國語','數學','英文','自然','社會'];
+const QUESTION_HEADERS_V610=['題目ID','科目','題型','題目','選項A','選項B','選項C','選項D','答案','解析','是否啟用','單元','圖片ID','圖片路徑'];
+const QUESTION_CACHE_TTL_V610=21600;
+function questionSubjectV610_(subject){
+  const s=String(subject||'').trim();if(!QUESTION_SUBJECTS_V610.includes(s))throw new Error('科目無效');return s;
+}
+function questionCacheBaseV610_(subject){
+  return 'question-bank:'+subject+':v610:'+(PropertiesService.getScriptProperties().getProperty('QUESTION_REV_V610:'+subject)||'0');
+}
+function clearSubjectQuestionCacheV610_(subject){
+  const s=questionSubjectV610_(subject),lock=LockService.getScriptLock(),owned=lock.hasLock();
+  if(!owned)lock.waitLock(12000);
+  try{
+    const c=CacheService.getScriptCache();
+    c.remove(questionCacheBaseV610_(s)+':meta');
+    PropertiesService.getScriptProperties().setProperty('QUESTION_REV_V610:'+s,Utilities.getUuid());
+    c.remove('QUESTION_SUBJECT_V5106_DISPLAY:'+s);c.remove('QUESTION_BANK_V5106_DISPLAY');c.remove('QUESTION_COUNTS_V5101');
+  }finally{if(!owned)lock.releaseLock();}
+}
+function adminRefreshQuestionBankV610(password,subject){
+  verifyAdminPassword_(password);const s=questionSubjectV610_(subject);
+  clearSubjectQuestionCacheV610_(s);return {ok:true,subject:s};
+}
+function onEdit(e){
+  const name=e?.range?.getSheet()?.getName();
+  const subject=QUESTION_SUBJECTS_V610.find(s=>name==='題庫_'+s);
+  if(subject)clearSubjectQuestionCacheV610_(subject);
+}
+function readQuestionSheetDisplayV610_(sh){
+  if(!sh||!sh.getLastRow()||!sh.getLastColumn())return [];
+  const values=sh.getRange(1,1,sh.getLastRow(),sh.getLastColumn()).getDisplayValues();
+  const headers=values[0].map(h=>String(h).trim());
+  return values.slice(1).filter(r=>r.some(v=>String(v).trim())).map(r=>Object.fromEntries(headers.map((h,i)=>[h,r[i]??''])));
+}
+function subjectQuestionRowsV610_(subject){
+  const s=questionSubjectV610_(subject),c=CacheService.getScriptCache();
+  const readCache=()=>{
+    try{
+      const base=questionCacheBaseV610_(s),meta=JSON.parse(c.get(base+':meta')||'null');if(!meta)return null;
+      let json='';for(let i=0;i<meta.parts;i++){const part=c.get(base+':'+meta.generation+':'+i);if(part===null)return null;json+=part;}
+      return JSON.parse(json);
+    }catch(e){return null;}
+  };
+  const hit=readCache();if(hit)return hit;
+  const lock=LockService.getScriptLock(),owned=lock.hasLock();if(!owned)lock.waitLock(12000);
+  try{
+    const second=readCache();if(second)return second;
+    const ss=SpreadsheetApp.getActive(),sh=ss.getSheetByName('題庫_'+s);
+    // Old deployments remain readable until migration; migrated subjects never read the total bank.
+    const source=sh?readQuestionSheetDisplayV610_(sh).map(q=>({...q,'科目':String(q['科目']||'').trim()||s})):readQuestionObjectsDisplay_();
+    const seen=new Set(),rows=source.filter(q=>{
+      const id=String(q['題目ID']||'').trim();if(!id||String(q['科目']||'').trim()!==s||seen.has(id))return false;seen.add(id);return true;
+    });
+    const base=questionCacheBaseV610_(s),generation=Utilities.getUuid(),json=JSON.stringify(rows);let parts=0;
+    try{
+      for(let offset=0;offset<json.length;){let end=Math.min(offset+20000,json.length);if(end<json.length&&/[\uD800-\uDBFF]/.test(json[end-1]))end--;c.put(base+':'+generation+':'+parts++,json.slice(offset,end),QUESTION_CACHE_TTL_V610);offset=end;}
+      c.put(base+':meta',JSON.stringify({generation,parts}),QUESTION_CACHE_TTL_V610);
+    }catch(e){}
+    PropertiesService.getScriptProperties().setProperty('QUESTION_COUNT_V610:'+s,String(rows.filter(questionEnabled_).length));
+    c.remove('QUESTION_COUNTS_V5101');
+    return rows;
+  }finally{if(!owned)lock.releaseLock();}
+}
+function getQuestionBatchV610(subject,batchSize,excludeIds){
+  const s=questionSubjectV610_(subject),limit=Math.max(20,Math.min(30,Math.floor(Number(batchSize)||25)));
+  if(excludeIds!=null&&(!Array.isArray(excludeIds)||excludeIds.length>20000))throw new Error('排除題目清單無效');
+  const all=getQuestionBankSubjectFast(s),exclude=new Set((excludeIds||[]).map(String));
+  const pool=all.filter(q=>!exclude.has(q.id));
+  for(let i=pool.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[pool[i],pool[j]]=[pool[j],pool[i]];}
+  // No automatic recycling: the client only starts a new cycle after its current queue is exhausted.
+  return {subject:s,questions:pool.slice(0,limit),total:all.length,remaining:Math.max(0,pool.length-limit)};
+}
+function setupOrMigrateSubjectQuestionBanksV610(){
+  requireMailSheetsServiceV600_();
+  const lock=LockService.getScriptLock();lock.waitLock(12000);
+  try{
+    const ss=SpreadsheetApp.getActive(),source=readQuestionObjectsDisplay_(),extra=Array.from(new Set(source.flatMap(q=>Object.keys(q))));
+    const report=[];
+    for(const s of QUESTION_SUBJECTS_V610){
+      const sh=ensureSheet_('題庫_'+s,QUESTION_HEADERS_V610.concat(extra.filter(h=>!QUESTION_HEADERS_V610.includes(h))));
+      const headers=sh.getRange(1,1,1,sh.getLastColumn()).getDisplayValues()[0].map(String),existing=readQuestionSheetDisplayV610_(sh),ids=new Set(existing.map(q=>String(q['題目ID'])));
+      const added=[];for(const q of source){const id=String(q['題目ID']||'');if(!id||String(q['科目']||'').trim()!==s||ids.has(id))continue;ids.add(id);added.push(headers.map(h=>String(q[h]??'')));}
+      if(added.length){
+        const start=sh.getLastRow()+1,needed=start+added.length-1;
+        if(needed>sh.getMaxRows())sh.insertRowsAfter(sh.getMaxRows(),needed-sh.getMaxRows());
+        // Explicit string cells prevent fractions (2/3), dates and leading '=' text becoming formulas.
+        Sheets.Spreadsheets.batchUpdate({requests:[{updateCells:{start:{sheetId:sh.getSheetId(),rowIndex:start-1,columnIndex:0},rows:added.map(r=>({values:r.map(v=>({userEnteredValue:{stringValue:v}}))})),fields:'userEnteredValue'}}]},ss.getId());
+      }
+      clearSubjectQuestionCacheV610_(s);
+      PropertiesService.getScriptProperties().setProperty('QUESTION_COUNT_V610:'+s,String(existing.concat(added.map(r=>Object.fromEntries(headers.map((h,i)=>[h,r[i]])))).filter(questionEnabled_).length));
+      report.push({subject:s,sheet:'題庫_'+s,added:added.length});
+    }
+    return {ok:true,subjects:report};
+  }finally{lock.releaseLock();}
+}
+
+/** Legacy total-bank reader is retained for migration and pre-migration compatibility only. */
 function readQuestionObjectsDisplay_(){
   const sh=SpreadsheetApp.getActive().getSheetByName(SHEETS.QUESTIONS);
   if(!sh)return [];
@@ -1952,10 +2048,7 @@ function questionEnabled_(row){
 function getQuestionBankSubjectFast(subject){
   const s=String(subject||'').trim();
   if(!['國語','數學','英文','自然','社會'].includes(s))return [];
-  const c=CacheService.getScriptCache(),key='QUESTION_SUBJECT_V5106_DISPLAY:'+s;
-  const hit=c.get(key);if(hit){try{return JSON.parse(hit);}catch(e){}}
-
-  const rows=cachedQuestionObjectsDisplay_().filter(x=>String(x['科目']||'')===s && questionEnabled_(x));
+  const rows=subjectQuestionRowsV610_(s).filter(questionEnabled_);
 
   const out=rows.map(x=>{
     const qi=resolveQuestionImage_(x);
@@ -1973,7 +2066,6 @@ function getQuestionBankSubjectFast(subject){
     };
   });
 
-  try{c.put(key,JSON.stringify(out),600);}catch(e){}
   return safeForClient_(out);
 }
 
@@ -1981,7 +2073,7 @@ function getQuestionBankBundleFast(){
   const c=CacheService.getScriptCache(),key='QUESTION_BANK_V5106_DISPLAY';
   const hit=c.get(key);if(hit){try{return JSON.parse(hit);}catch(e){}}
   const out={'國語':[],'數學':[],'英文':[],'自然':[],'社會':[]};
-  const rows=cachedQuestionObjectsDisplay_().filter(questionEnabled_);
+  const rows=QUESTION_SUBJECTS_V610.flatMap(subjectQuestionRowsV610_).filter(questionEnabled_);
   rows.forEach(x=>{
     const s=String(x['科目']||'');if(!out[s])return;
     const qi=resolveQuestionImage_(x);
@@ -2186,6 +2278,7 @@ function getStaticCatalogBundleV598(forceRefresh){
 function getStaticCatalogBundleV597(){ return getStaticCatalogBundleV598(false); }
 
 function clearAllGameConfigCacheV598_(){
+  QUESTION_SUBJECTS_V610.forEach(clearSubjectQuestionCacheV610_);
   const c=CacheService.getScriptCache();
   clearFurnitureCacheV610_();
 
@@ -2572,14 +2665,8 @@ function getChallengeHomeBundleV5101(studentId){
 
   if(!counts){
     counts={'國語':0,'數學':0,'英文':0,'自然':0,'社會':0};
-    const rows=readQuestionObjectsDisplay_();
-    rows.forEach(x=>{
-      const s=String(x['科目']||'').trim();
-      if(!(s in counts))return;
-      const enabled=String(x['是否啟用']||'').trim().toUpperCase();
-      if(enabled==='FALSE'||enabled==='否'||enabled==='0')return;
-      counts[s]++;
-    });
+    const props=PropertiesService.getScriptProperties();
+    QUESTION_SUBJECTS_V610.forEach(s=>counts[s]=Number(props.getProperty('QUESTION_COUNT_V610:'+s)||0));
     try{c.put(countKey,JSON.stringify(counts),600);}catch(e){}
   }
 
@@ -2938,6 +3025,8 @@ function doPost(e) {
       getChallengeHomeBundleV5101: getChallengeHomeBundleV5101,
       getQuestionBankBundleFast: getQuestionBankBundleFast,
       getQuestionBankSubjectFast: getQuestionBankSubjectFast,
+      getQuestionBatchV610: getQuestionBatchV610,
+      adminRefreshQuestionBankV610: adminRefreshQuestionBankV610,
       getMonsterCatalogFresh: getMonsterCatalogCached_,
       getBattleBackgroundCatalogFast: getBattleBackgroundCatalogFast,
       getPetBattleConfigFast: getPetBattleConfigFast,

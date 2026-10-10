@@ -19,6 +19,7 @@ async function fixture(page,url){
   gs=gsRaw=async(action,...args)=>{
    calls.push({action,args});await new Promise(resolve=>setTimeout(resolve,100));
    if(action==='getQuestionBankSubjectFast')return Array.from({length:60},(_,i)=>({id:'Q'+i,type:'選擇',text:'分數 2/3',options:['甲','乙','丙','丁'],answer:'A'}));
+   if(action==='getQuestionBatchV610')return {questions:Array.from({length:25},(_,i)=>({id:'Q'+i,type:'選擇',text:'分數 2/3',options:['甲','乙','丙','丁'],answer:'A'})),remaining:35};
    if(action==='getMonsterCatalogFresh')return [{monsterId:'M1',name:'測試怪物',image:'assets/battle-benchmark/monster.png',baseHp:10000,hpGrowth:0,enabled:true,subject:'全部'}];
    if(action==='getBattleBackgroundCatalogFast')return [{image:'assets/battle-benchmark/background.png',subject:'全部',enabled:true}];
    if(action==='getPetBattleConfigFast')return [{petId:'PET013',attribute:'草',specialName:'永恆森林',specialDamage:150}];

@@ -1,4 +1,4 @@
-const FRONTEND_BUILD='20261008-v610-battle-performance';
+const FRONTEND_BUILD='20261010-v610-question-batches';
 const STONE_SPRITE_URL_V610='assets/items/stones/attribute-stones.png';
 const STONE_SPRITES_V610={LIGHT:0,EARTH:1,DARK:2,GRASS:3,WATER:4,POISON:5,FIRE:6,ELECTRIC:7,ICE:8,WIND:9,STEEL:10,CHAOS:11};
 const STONE_ATTRIBUTES_V610=['光','地','暗','草','水','毒','火','電','冰','風','鋼','混沌'];
@@ -435,7 +435,7 @@ function localQuestionBatch(subject,excludeIds=[],limit=30){
   if(!pool.length)pool=[...src];
   return shuffleCopy(pool).slice(0,Math.max(1,limit));
 }
-function questionCacheKey(subject){return 'petHouseQuestionV5106Display:'+String(subject||'');}
+function questionCacheKey(subject){return 'petHouseQuestionBatchV610:'+FRONTEND_BUILD+':'+String(subject||'');}
 function readQuestionBrowserCache(subject){
   try{
     const x=JSON.parse(localStorage.getItem(questionCacheKey(subject))||'null');
@@ -449,23 +449,51 @@ function saveQuestionBrowserCache(subject,rows){
 async function ensureQuestionBank(subject){
   subject=String(subject||'');
   if(QUESTION_BANK_LOADED[subject])return QUESTION_BANK_CACHE[subject]||[];
-
-  const local=readQuestionBrowserCache(subject);
-  if(Array.isArray(local)){
-    QUESTION_BANK_CACHE[subject]=local;
-    QUESTION_BANK_LOADED[subject]=true;
-    QUESTION_BANK_READY=QUESTION_BANK_READY||local.length>0;
-    if(currentTab==='challenge'&&mainMode==='battle'&&challenge.active)renderBattle();
-    return local;
-  }
-
-  const rows=await gsRaw('getQuestionBankSubjectFast',subject);
+  const epoch=BATTLE_VIEW_EPOCH_V600,account=currentId;
+  const response=await requestQuestionBatchV610(subject,[],epoch,account);
+  if(epoch!==BATTLE_VIEW_EPOCH_V600||account!==currentId)return [];
+  const rows=response.questions;
   QUESTION_BANK_CACHE[subject]=Array.isArray(rows)?rows:[];
   QUESTION_BANK_LOADED[subject]=true;
-  saveQuestionBrowserCache(subject,QUESTION_BANK_CACHE[subject]);
   QUESTION_BANK_READY=Object.keys(QUESTION_BANK_CACHE).some(k=>Array.isArray(QUESTION_BANK_CACHE[k])&&QUESTION_BANK_CACHE[k].length);
-  if(currentTab==='challenge'&&mainMode==='battle'&&challenge.active)renderBattle();
   return QUESTION_BANK_CACHE[subject];
+}
+const QUESTION_BATCH_SIZE_V610=25,QUESTION_PREFETCH_THRESHOLD_V610=5;
+const QUESTION_BATCH_REQUESTS_V610=new Map();
+let QUESTION_BATCH_NETWORK_V610=Promise.resolve(),QUESTION_SESSION_V610=null;
+function requestQuestionBatchV610(subject,exclude,epoch,account){
+  const key=questionCacheKey(subject)+':'+epoch+':'+account+':'+JSON.stringify(exclude);
+  if(QUESTION_BATCH_REQUESTS_V610.has(key))return QUESTION_BATCH_REQUESTS_V610.get(key);
+  const request=QUESTION_BATCH_NETWORK_V610.catch(()=>{}).then(()=>{
+    if(epoch!==BATTLE_VIEW_EPOCH_V600||account!==currentId)return {questions:[],cancelled:true};
+    return gsRaw('getQuestionBatchV610',subject,QUESTION_BATCH_SIZE_V610,exclude);
+  });
+  QUESTION_BATCH_NETWORK_V610=request;
+  QUESTION_BATCH_REQUESTS_V610.set(key,request);
+  request.then(()=>QUESTION_BATCH_REQUESTS_V610.delete(key),()=>QUESTION_BATCH_REQUESTS_V610.delete(key));
+  return request;
+}
+function initQuestionSessionV610(){
+  QUESTION_SESSION_V610={subject:challenge.subject,epoch:BATTLE_VIEW_EPOCH_V600,account:currentId,promise:null,exhausted:false,
+    cycleIds:new Set([...(challenge.seen||[]),...(challenge.questions||[]).map(q=>q.id)].map(String))};
+  return QUESTION_SESSION_V610;
+}
+function prefetchBattleQuestionsV610(force=false){
+  if(!force&&(!challenge.active||challenge.status?.locked||Number(challenge.status?.wrong||0)>=3))return Promise.resolve();
+  const session=QUESTION_SESSION_V610||initQuestionSessionV610();
+  if(session.promise)return session.promise;
+  const remaining=(challenge.questions?.length||0)-(challenge.qIndex||0);
+  if(!force&&(remaining>QUESTION_PREFETCH_THRESHOLD_V610||session.exhausted))return Promise.resolve();
+  if(force&&remaining===0&&session.exhausted){session.cycleIds.clear();session.exhausted=false;}
+  const exclude=[...session.cycleIds];
+  const promise=requestQuestionBatchV610(session.subject,exclude,session.epoch,session.account).then(response=>{
+    if(QUESTION_SESSION_V610!==session||session.epoch!==BATTLE_VIEW_EPOCH_V600||session.account!==currentId||mainMode!=='battle')return;
+    const rows=(response.questions||[]).filter(q=>!session.cycleIds.has(String(q.id)));
+    rows.forEach(q=>session.cycleIds.add(String(q.id)));
+    challenge.questions=(challenge.questions||[]).slice(challenge.qIndex||0).concat(rows);challenge.qIndex=0;
+    session.exhausted=response.remaining===0;
+  }).finally(()=>{if(session.promise===promise)session.promise=null;});
+  session.promise=promise;return promise;
 }
 
 async function hydrateAfterLoginV596(){
@@ -928,6 +956,7 @@ function battleTimeoutV600_(callback,ms){
   BATTLE_TIMERS_V600.add(timer);return timer;
 }
 function cleanupBattleViewV600_(){
+  QUESTION_SESSION_V610=null;
   BATTLE_SKILLS_SESSION_V610=null;
   BATTLE_VIEW_EPOCH_V600++;
   BATTLE_TIMERS_V600.forEach(clearTimeout);BATTLE_TIMERS_V600.clear();
@@ -1383,7 +1412,7 @@ async function chooseChallenge(subject){
   if(!QUESTION_BANK_LOADED[subject]){
     battleControlsV600_().innerHTML=`<h3>⚔️ ${esc(subject)}對戰</h3><div class="petcard">載入${esc(subject)}題庫中…</div>`;
     showWaiting('載入題庫中...');
-    try{await ensureQuestionBank(subject);}finally{hideWaiting();}
+    try{await ensureQuestionBank(subject);}catch(e){if(isCurrent())alert(e.message||e);return;}finally{hideWaiting();}
   }
   if(!isCurrent())return;
   if(!(QUESTION_BANK_CACHE[subject]||[]).length){
@@ -1449,12 +1478,12 @@ async function resumeSavedChallengeV5105(){
     const pet=state.pets.find(p=>String(p.petId)===String(save.petId));
     if(!pet)throw new Error('存檔使用的寵物目前不在你的寵物清單中');
 
-    let pool=localQuestionBatch(challenge.subject,Array.isArray(save.seen)?save.seen:[],30);
+    let pool=localQuestionBatch(challenge.subject,Array.isArray(save.seen)?save.seen:[],25).filter(q=>!(save.seen||[]).map(String).includes(String(q.id)));
     if(!pool.length){
-      await ensureQuestionBank(challenge.subject);
-      pool=localQuestionBatch(challenge.subject,Array.isArray(save.seen)?save.seen:[],30);
+      const response=await requestQuestionBatchV610(challenge.subject,save.seen||[],epoch,account);
+      pool=response.questions||[];
     }
-    if(!pool.length)pool=localQuestionBatch(challenge.subject,[],30);
+    if(!pool.length)pool=localQuestionBatch(challenge.subject,[],25);
     if(!pool.length)throw new Error('這個科目目前沒有可用題目');
 
     if(epoch!==BATTLE_VIEW_EPOCH_V600||account!==currentId||mainMode!=='battle')return;
@@ -1472,7 +1501,7 @@ async function resumeSavedChallengeV5105(){
     challenge.selectedSkill=null;
     challenge.question=null;
     challenge.lastMsg=`<span class="success">💾 已讀取存檔，從怪物 ${challenge.monsterNo} 繼續。</span>`;
-    BATTLE_SKILLS_SESSION_V610=null;challenge.active=true;switchMainMode('battle');renderBattle();
+    BATTLE_SKILLS_SESSION_V610=null;challenge.active=true;switchMainMode('battle');initQuestionSessionV610();renderBattle();
   }catch(e){alert(e.message||e);}
 }
 
@@ -1488,13 +1517,13 @@ async function startChallengeUI(){
       return;
     }
 
-    // 題庫已在登入後背景預載；正常情況不再等 Apps Script。
-    let pool=localQuestionBatch(challenge.subject,[],30);
+    // Only the selected subject's first small batch is loaded.
+    let pool=localQuestionBatch(challenge.subject,[],25);
     if(!pool.length){
       battleControlsV600_().innerHTML='<div class="petcard">題庫第一次載入中…</div>';
       showWaiting('載入題庫中...');
       try{await ensureQuestionBank(challenge.subject);}finally{hideWaiting();}
-      pool=localQuestionBatch(challenge.subject,[],30);
+      pool=localQuestionBatch(challenge.subject,[],25);
     }
     if(!pool.length)throw new Error('這個科目目前沒有可用題目；若剛登入，請等 1 秒後再按一次開始戰鬥。');
 
@@ -1511,7 +1540,7 @@ async function startChallengeUI(){
     challenge.monsterMaxHp=getMonsterHp(challenge.monsterCfg,challenge.monsterNo);
     challenge.monsterHp=challenge.monsterMaxHp;
     challenge.selectedSkill=null;challenge.question=null;challenge.lastMsg='';
-    BATTLE_SKILLS_SESSION_V610=null;challenge.active=true;switchMainMode('battle');renderBattle();
+    BATTLE_SKILLS_SESSION_V610=null;challenge.active=true;switchMainMode('battle');initQuestionSessionV610();renderBattle();
   }catch(e){alert(e.message||e);}
 }
 function battleSkillPowerV600_(skill){return '威力 '+esc(skill.finalDamage||skill.damage)+(BigInt(skill.bonusDamage||'0')>0?'（強化 +'+esc(skill.bonusDamage)+'）':'');}
@@ -1616,7 +1645,7 @@ async function sendBattleAnswer(ans){
 
   const damage=Math.max(1,Math.round(Number(skill.damage||0)*(good?1:.3)));
   challenge.pending.push({questionId:q.id,answer:ans});challenge.seen.push(q.id);challenge.qIndex++;
-  if(challenge.questions && challenge.questions.length-challenge.qIndex<=6){const refill=localQuestionBatch(challenge.subject,challenge.seen.slice(-80),30);if(refill.length){challenge.questions=challenge.questions.slice(challenge.qIndex).concat(refill);challenge.qIndex=0;}}
+  prefetchBattleQuestionsV610().catch(()=>{}); // Keep the current answer/animation interactive; retry on exhaustion.
   challenge.lastMsg=good?`<span class="success">✅ 正確！${esc(skill.name)}造成 <span class="damage-pop">${damage}</span> 傷害，+${gained} EXP</span>`:`<span class="wrong">❌ 答錯，只造成 30% 傷害：<span class="damage-pop">${damage}</span><br>正確答案：${formatMathText(q.answer)} ${formatMathText(q.explanation||'')}</span>`;
   challenge.question=null;challenge.selectedSkill=null;
 
@@ -1646,16 +1675,13 @@ async function sendBattleAnswer(ans){
 async function loadMoreBattleQuestions(){
   const epoch=BATTLE_VIEW_EPOCH_V600;
   try{
-    let qs=localQuestionBatch(challenge.subject,challenge.seen.slice(-80),30);
-    if(!qs.length){
-      await ensureQuestionBank(challenge.subject);
-      qs=localQuestionBatch(challenge.subject,challenge.seen.slice(-80),30);
-    }
+    await prefetchBattleQuestionsV610(true);
     if(epoch!==BATTLE_VIEW_EPOCH_V600||mainMode!=='battle')return;
-    challenge.questions=qs||[];
-    challenge.qIndex=0;
+    // If the last unseen batch was empty, start a new cycle only after the queue is empty.
+    if(!challenge.questions.length&&QUESTION_SESSION_V610?.exhausted)await prefetchBattleQuestionsV610(true);
+    if(epoch!==BATTLE_VIEW_EPOCH_V600||mainMode!=='battle')return;
     if(!challenge.questions.length)throw new Error('沒有可用題目');
-    challenge.question=challenge.questions[0];
+    challenge.question=challenge.questions[challenge.qIndex];
     renderBattleQuestion();
   }catch(e){alert(e.message||e);}
 }
@@ -2052,6 +2078,7 @@ async function loadAdmin(){
         <button class="btn blue" onclick="adminRefreshGameConfig()">🔄 更新遊戲設定</button>
       </div>
       <div id="admin-config-status" class="small" style="margin-top:8px"></div>
+      <div class="row" style="margin-top:10px"><label>題庫科目 <select id="adminQuestionSubjectV610">${['國語','數學','英文','自然','社會'].map(s=>`<option>${s}</option>`).join('')}</select></label><button id="adminQuestionRefreshV610" type="button" class="btn secondary" onclick="adminRefreshSubjectQuestionsV610(this)">更新此科題庫快取</button></div>
     </div>
 
     <div class="petcard" style="margin-bottom:12px">
@@ -2084,6 +2111,17 @@ async function loadAdmin(){
   renderAdminBatchV610();
 }
 let ADMIN_BATCH_MODE_V610='COINS',ADMIN_BATCH_BUSY_V610=false,ADMIN_BATCH_PREVIEW_V610=null;
+async function adminRefreshSubjectQuestionsV610(button){
+  if(button.disabled)return;
+  const subject=document.getElementById('adminQuestionSubjectV610').value;
+  button.disabled=true;
+  try{
+    await gs('adminRefreshQuestionBankV610',adminPassword,subject);
+    delete QUESTION_BANK_CACHE[subject];delete QUESTION_BANK_LOADED[subject];
+    document.getElementById('admin-config-status').textContent=subject+'題庫快取已更新，其他科目保留。';
+  }catch(e){document.getElementById('admin-config-status').textContent='更新失敗：'+String(e.message||e);}
+  finally{button.disabled=false;}
+}
 let ADMIN_BATCH_DRAFT_V610={COINS:{},ITEMS:{}},ADMIN_BATCH_ITEM_V610='',ADMIN_BATCH_RESULT_V610=null;
 const ADMIN_BATCH_PENDING_PREFIX_V610='petHouseAdminBatchV610:';
 const ADMIN_BATCH_STUDENT_IDS_V610=Object.freeze(['50501','50502','50503','50504','50505','50506','50507','50508','50509','50510','50511','50512','50513','50514','50515','50516','50517','50518','50519','50520','50522','50523','50524','50525','50526']);

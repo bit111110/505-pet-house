@@ -7,7 +7,7 @@ const { randomUUID,createHash } = require('node:crypto');
 const root = path.resolve(__dirname, '..');
 const backend = fs.readFileSync(path.join(root, 'apps-script/Code.gs'), 'utf8');
 const frontend = fs.readFileSync(path.join(root, 'app.js'), 'utf8');
-const tables = new Map(), cache = new Map(), writes = [];
+const tables = new Map(), cache = new Map(), writes = [], properties = new Map();
 let locked = false, fault = null;
 const clone = rows => rows.map(row => row.slice());
 function makeSheet(name, values = []) {
@@ -25,6 +25,7 @@ function makeSheet(name, values = []) {
         if (fault) fault(event, 'after');
       };
       return { getValues: () => Array.from({ length: n }, (_, i) => Array.from({ length: m }, (_, j) => sh.values[r + i - 1]?.[c + j - 1] ?? '')),
+        getDisplayValues: () => Array.from({ length: n }, (_, i) => Array.from({ length: m }, (_, j) => String(sh.values[r + i - 1]?.[c + j - 1] ?? ''))),
         getValue: () => sh.values[r - 1]?.[c - 1] ?? '', setValue: value => write([[value]]), setValues: write,
         setDataValidation: rule => sh.validations.push(rule) };
     },
@@ -55,6 +56,7 @@ const context = vm.createContext({ console, Date, Math, JSON, BigInt, Set, Map, 
     const tokens={yyyy:parts.year,MM:parts.month,dd:parts.day,HH:parts.hour,mm:parts.minute,ss:parts.second};return format.replace(/yyyy|MM|dd|HH|mm|ss/g,token=>tokens[token]);
   } },
   CacheService: { getScriptCache: () => ({ get: key => cache.get(key) || null, put: (key, value) => cache.set(key, value), remove: key => cache.delete(key) }) },
+  PropertiesService: { getScriptProperties:()=>({getProperty:key=>properties.get(key)||null,setProperty:(key,value)=>properties.set(key,String(value))}) },
   LockService: { getScriptLock: () => ({ hasLock:()=>locked, waitLock() { assert.equal(locked, false); locked = true; }, releaseLock() { locked = false; } }) }
 });
 vm.runInContext(backend, context);

@@ -20,6 +20,7 @@ async function run(){
     await page.exposeFunction('mockAdminAPI',async(action,args)=>{
      calls.push({action,args});assert.equal(args[0],credential);
      if(action==='getAdminDataSecure')return {students:[...students.map(s=>({...s})),{id:'50521',name:'排除學生'},{id:'',name:''},{id:'invalid',name:'無效學號'},{id:'50527',name:''},{id:'50501',name:'重複學生'}],items:[{'道具ID':'EXP010','名稱':'經驗糖果'},{'道具ID':'STONE_GRASS','名稱':'草之石'}],pets:[]};
+     if(action==='adminRefreshQuestionBankV610')return {ok:true,subject:args[1]};
      if(!['grantCoinsBatchV610','grantItemsBatchV610'].includes(action))throw Error('unexpected '+action);
      assert.deepEqual((action==='grantCoinsBatchV610'?args[1]:args[2]).map(e=>e.studentId),studentIds,'both modes submit only the fixed 25 IDs');
      await new Promise(resolve=>setTimeout(resolve,60));
@@ -70,6 +71,13 @@ async function run(){
    assert.equal(serverItems.get('50501:STONE_GRASS'),before,'new-tab timeout retry never grants twice');
    const attempts=calls.filter(c=>c.action==='grantItemsBatchV610').slice(-2);assert.equal(attempts[0].args[3],attempts[1].args[3]);
    assert.equal(await tab.evaluate(()=>pendingAdminBatchClientV610().length),0);
+   await page.evaluate(()=>{QUESTION_BANK_CACHE['數學']=[{id:'M1'}];QUESTION_BANK_LOADED['數學']=true;QUESTION_BANK_CACHE['國語']=[{id:'C1'}];QUESTION_BANK_LOADED['國語']=true;});
+   await page.locator('#adminQuestionSubjectV610').selectOption('數學');await page.locator('#adminQuestionRefreshV610').click();
+   await page.waitForFunction(()=>!document.getElementById('adminQuestionRefreshV610').disabled);
+   assert.equal(calls.filter(c=>c.action==='adminRefreshQuestionBankV610').length,1);
+   assert.equal(calls.at(-1).args[1],'數學');
+   assert.equal(await page.evaluate(()=>QUESTION_BANK_LOADED['數學']),undefined);
+   assert.equal(await page.evaluate(()=>QUESTION_BANK_CACHE['國語'][0].id),'C1','teacher precision refresh preserves other frontend subjects');
    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),true,'responsive teacher UI');
    assert.deepEqual(errors,[]);await context.close();
   }

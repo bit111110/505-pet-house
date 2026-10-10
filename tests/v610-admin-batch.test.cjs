@@ -3,11 +3,13 @@ const assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
 const vm=require('node:vm'),{execFileSync}=require('node:child_process');
 const {context,call,tables,cache,writes,makeSheet,setFault,isLocked,frontend}=require('./v600.test.cjs');
 const previous=vm.createContext({});vm.runInContext(execFileSync('git',['show','399dab7:apps-script/Code.gs'],{encoding:'utf8'}),previous);
-for(const name of ['getUpgradeBundleV600','useAttributeStoneV600','useAttributeStonesBatchV610','setupOrUpgradeV610','randomGift_','hourlyPetGiftV600_','claimMailsLockedV600_','getBattleProgressV5105','saveBattleProgressV5105'])assert.equal(context[name].toString().replace(/\r\n/g,'\n'),previous[name].toString().replace(/\r\n/g,'\n'),name+' outside Phase 2 unchanged');
+// Normalize the already deployed syntax-only fix and visible version text when comparing historical source.
+const normalized=fn=>fn.toString().replace(/\r\n/g,'\n').replace(/\b(0|5)n\b/g,'BigInt($1)').replace('V6.0 · 升級工坊','V6.1 · 升級工坊');
+for(const name of ['getUpgradeBundleV600','useAttributeStoneV600','useAttributeStonesBatchV610','setupOrUpgradeV610','randomGift_','hourlyPetGiftV600_','claimMailsLockedV600_','getBattleProgressV5105','saveBattleProgressV5105'])assert.equal(normalized(context[name]),normalized(previous[name]),name+' outside Phase 2 unchanged');
 const ui=vm.createContext({localStorage:{getItem:()=>null},sessionStorage:{getItem:()=>null},window:{}}),oldUI=vm.createContext({localStorage:{getItem:()=>null},sessionStorage:{getItem:()=>null},window:{}});
 vm.runInContext(frontend,ui);vm.runInContext(execFileSync('git',['show','399dab7:app.js'],{encoding:'utf8'}),oldUI);
 // Phase 3 intentionally replaces stone artwork; mutation and battle behavior stay pinned.
-for(const name of ['renderUpgrade','useStoneV600','applyStoneResultV610','updateStoneViewV610','getConfiguredPetSkills'])assert.equal(ui[name].toString().replace(/\r\n/g,'\n'),oldUI[name].toString().replace(/\r\n/g,'\n'),name+' UI unchanged');
+for(const name of ['renderUpgrade','useStoneV600','applyStoneResultV610','updateStoneViewV610','getConfiguredPetSkills'])assert.equal(normalized(ui[name]),normalized(oldUI[name]),name+' UI unchanged');
 let valueReads=0,commits=0;
 const column=name=>[...name].reduce((n,c)=>n*26+c.charCodeAt(0)-64,0);
 context.Sheets.Spreadsheets.Values={batchGet(_id,{ranges}){

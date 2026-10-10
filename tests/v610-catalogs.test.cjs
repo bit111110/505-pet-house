@@ -2,7 +2,8 @@
 const assert=require('node:assert/strict'),vm=require('node:vm'),{execFileSync}=require('node:child_process');
 const {context,call,tables,cache,makeSheet,setFault,frontend,backend}=require('./v600.test.cjs');
 const previous=vm.createContext({});vm.runInContext(execFileSync('git',['show','5e08c48:apps-script/Code.gs'],{encoding:'utf8'}),previous);
-for(const name of ['setupOrUpgradeV600','setupOrUpgradeV610','setupAdminBatchV610','grantCoinsBatchV610','grantItemsBatchV610','useAttributeStoneV600','useAttributeStonesBatchV610','randomGift_','hourlyPetGiftV600_','claimMailsLockedV600_','saveBattleProgressV5105'])assert.equal(context[name].toString().replace(/\r\n/g,'\n'),previous[name].toString().replace(/\r\n/g,'\n'),name+' core preserved');
+const normalized=fn=>fn.toString().replace(/\r\n/g,'\n').replace(/\b(0|5)n\b/g,'BigInt($1)');
+for(const name of ['setupOrUpgradeV600','setupOrUpgradeV610','setupAdminBatchV610','grantCoinsBatchV610','grantItemsBatchV610','useAttributeStoneV600','useAttributeStonesBatchV610','randomGift_','hourlyPetGiftV600_','claimMailsLockedV600_','saveBattleProgressV5105'])assert.equal(normalized(context[name]),normalized(previous[name]),name+' core preserved');
 makeSheet('家具設定',[
  ['家具ID','名稱','價格','圖片','類型','是否開放'],
  ['OLD001','既有樹樁',20,'assets/furniture/old.png','舊地面',true]
